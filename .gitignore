@@ -1,0 +1,4 @@
+# Secret keys - never upload these to GitHub
+onshape-keys.env
+.env
+.DS_Store
