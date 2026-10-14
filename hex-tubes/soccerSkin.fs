@@ -1,7 +1,7 @@
 FeatureScript 3095;
 import(path : "onshape/std/common.fs", version : "3095.0");
 
-// Soccer skin — FeatureScript for Onshape   (v2: coloured pentagons, random sizes for the connecting shapes)
+// Soccer skin — FeatureScript for Onshape   (v4: pentagons never touch; experimental flattening)
 //
 // Rebuilds the side of a tube as a skin of hexagons with pentagons mixed in,
 // like a soccer ball wrapped around the tube.
@@ -16,10 +16,13 @@ import(path : "onshape/std/common.fs", version : "3095.0");
 //      diagonals) as equal as the surface allows, and all pentagons are one size.
 //      The hexagons and heptagons around them take up the slack; each of those
 //      is also given a random size, so the connecting shapes vary.
-//   4. Each face is a fill surface across its straight edges; the faces are
+//   4. Flattening (experimental, off by default): vertices leave the tube so the
+//      faces get flatter. It only removes about a third of the cupping, because
+//      flat convex faces meeting three to a corner cannot wrap a tube.
+//   5. Each face is a fill surface across its straight edges; the faces are
 //      knitted into one surface named "Skin - N faces", with the pentagons coloured.
 //
-// "Wireframe preview" skips step 4 and only draws the edges. It is much faster,
+// "Wireframe preview" skips step 5 and only draws the edges. It is much faster,
 // so use it while choosing the counts and the seed.
 //
 // INSTALL: in a Feature Studio, select all, delete, paste this whole file, Commit.
@@ -36,10 +39,13 @@ export enum SkinOutput
 
 const AROUND_BOUNDS = { (unitless) : [3, 12, 200] } as IntegerBoundSpec;
 const ALONG_BOUNDS = { (unitless) : [2, 40, 2000] } as IntegerBoundSpec;
-const PERCENT_BOUNDS = { (unitless) : [0, 8, 25] } as RealBoundSpec;
+const PERCENT_BOUNDS = { (unitless) : [0, 8, 50] } as RealBoundSpec;
 const SEED_BOUNDS = { (unitless) : [1, 1, 100000] } as IntegerBoundSpec;
 const PASS_BOUNDS = { (unitless) : [0, 40, 500] } as IntegerBoundSpec;
 const VARIATION_BOUNDS = { (unitless) : [0, 25, 60] } as RealBoundSpec;
+const FLAT_BOUNDS = { (unitless) : [0, 0, 1000] } as IntegerBoundSpec;
+// While flattening: how strongly a vertex is pulled back to its spot on the tube each pass.
+const FLATTEN_ANCHOR = 0.02;
 
 // Honeycomb with hexagons 1 unit wide, points up: row spacing and corner heights.
 const ROW_PITCH = 0.8660254037844386;   // sqrt(3) / 2
@@ -81,6 +87,9 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
 
         annotation { "Name" : "Evening passes" }
         isInteger(definition.passes, PASS_BOUNDS);
+
+        annotation { "Name" : "Flattening passes (experimental, 0 = stay on the tube)" }
+        isInteger(definition.flatPasses, FLAT_BOUNDS);
 
         annotation { "Name" : "Output" }
         definition.output is SkinOutput;
@@ -175,12 +184,18 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
             }
         }
         var blocked = endFace;
+        var pentagonFlag = makeArray(nf, false);
         var pentagons = [];
         const want = round(definition.pentagonPercent / 100 * nf / 2);
         var rng = definition.seed * 7919 + 13;
         var made = 0;
-        for (var attempt = 0; attempt < 60 * want + 100 && made < want; attempt += 1)
+        // First try to keep pairs at least one hexagon apart, so pentagons have room to
+        // even out. If that can't fit as many as asked for, pack the rest in wherever
+        // four whole hexagons are left.
+        const spacedAttempts = 60 * want + 100;
+        for (var attempt = 0; attempt < 5 * spacedAttempts && made < want; attempt += 1)
         {
+            const spaced = attempt < spacedAttempts;
             rng = (rng * 16807) % 2147483647;
             const e = edges[floor(rng / 2147483647 * size(edges))];
             const a = e[0];
@@ -194,13 +209,24 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
             var usable = true;
             for (var fi in four)
             {
-                if (blocked[fi] || size(faces[fi]) != 6)
+                if ((spaced ? blocked[fi] : endFace[fi]) || size(faces[fi]) != 6)
                     usable = false;
+            }
+            // Two pentagons must never touch: the two faces about to become pentagons
+            // may not share a corner with an existing one.
+            for (var vtx in concatenateArrays([faces[shared[0]], faces[shared[1]]]))
+            {
+                if (vtx == a || vtx == b)
+                    continue;
+                for (var g in vertexFaces[vtx])
+                {
+                    if (pentagonFlag[g])
+                        usable = false;
+                }
             }
             if (!usable)
                 continue;
 
-            // Keep other pairs at least one hexagon away, so pentagons have room to even out.
             for (var fi in four)
             {
                 for (var vtx in faces[fi])
@@ -248,6 +274,12 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
             tx[b] = wrapX(mx - px, N);
             ty[b] = my - py;
 
+            // a left side2 and joined the far end face; b the other way round.
+            vertexFaces[a] = [shared[0], endA[0], endB[0]];
+            vertexFaces[b] = [shared[1], endA[0], endB[0]];
+
+            pentagonFlag[shared[0]] = true;
+            pentagonFlag[shared[1]] = true;
             pentagons = append(pentagons, shared[0]);
             pentagons = append(pentagons, shared[1]);
             made += 1;
@@ -272,12 +304,16 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
         for (var vtx = 0; vtx < nv; vtx += 1)
             fixed[vtx] = ty[vtx] == 0 || ty[vtx] == yMax;
         var inPentagon = makeArray(nv, false);
+        var pentagonsAt = makeArray(nv, 0);
         var isPentagon = makeArray(nf, false);
         for (var fi in pentagons)
         {
             isPentagon[fi] = true;
             for (var vtx in faces[fi])
+            {
                 inPentagon[vtx] = true;
+                pentagonsAt[vtx] += 1;
+            }
         }
         // Every connecting shape (not a pentagon, not cut by a tube end) gets a random size.
         const variation = definition.sizeVariation / 100;
@@ -392,34 +428,10 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
                 }
             }
 
-            // Pentagons: springs on the 5 sides and 5 diagonals toward a regular pentagon.
             // All pentagons aim for the same side: the average over the whole skin.
-            var side = 0;
-            for (var fi in pentagons)
-            {
-                const f = faces[fi];
-                for (var k = 0; k < 5; k += 1)
-                    side += length3(sub3(X[f[(k + 1) % 5]], X[f[k]])) / 5 / size(pentagons);
-            }
-            for (var fi in pentagons)
-            {
-                const f = faces[fi];
-                for (var k = 0; k < 5; k += 1)
-                {
-                    for (var skip = 1; skip <= 2; skip += 1)
-                    {
-                        const a = f[k];
-                        const b = f[(k + skip) % 5];
-                        const d = sub3(X[b], X[a]);
-                        const len = length3(d);
-                        const target = skip == 1 ? side : GOLDEN * side;
-                        // Each corner sits on 4 springs, so share the correction.
-                        const fix = scale3(d, 0.5 * (len - target) / len / 4);
-                        move[a] = add3(move[a], fix);
-                        move[b] = sub3(move[b], fix);
-                    }
-                }
-            }
+            const springs = pentagonMoves(X, faces, pentagons, pentagonsAt, pentagonSide(X, faces, pentagons));
+            for (var vtx = 0; vtx < nv; vtx += 1)
+                move[vtx] = add3(move[vtx], springs[vtx]);
 
             // Turn each 3D move into a slide along the surface.
             for (var vtx = 0; vtx < nv; vtx += 1)
@@ -451,6 +463,57 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
         for (var vtx = 0; vtx < nv; vtx += 1)
             P[vtx] = meters(planes[vtx].origin);
 
+        // ---- 6b. Flatten: let vertices leave the tube so the faces become flat ----
+        stage = "flattening faces";
+        const home = P;
+        const homeSide = pentagonSide(P, faces, pentagons);
+        for (var pass = 0; pass < definition.flatPasses; pass += 1)
+        {
+            var normals = makeArray(nf, [0, 0, 0]);
+            var offsets = makeArray(nf, 0);
+            for (var fi = 0; fi < nf; fi += 1)
+            {
+                const fit = fitPlane(P, faces[fi]);
+                normals[fi] = fit.n;
+                offsets[fi] = fit.d;
+            }
+            // Move each vertex onto the planes of its faces (the average of the three
+            // moves, which cannot overshoot), with a light pull back to its spot on the tube.
+            var Q = P;
+            for (var vtx = 0; vtx < nv; vtx += 1)
+            {
+                var shift = scale3(sub3(home[vtx], P[vtx]), FLATTEN_ANCHOR);
+                for (var fi in vertexFaces[vtx])
+                {
+                    const gap = offsets[fi] - dot3(normals[fi], P[vtx]);
+                    shift = add3(shift, scale3(normals[fi], gap / size(vertexFaces[vtx])));
+                }
+                Q[vtx] = add3(P[vtx], shift);
+            }
+            // Keep the pentagons even, and the size they had on the tube, while the faces flatten.
+            for (var round = 0; round < 3; round += 1)
+            {
+                const springs = pentagonMoves(Q, faces, pentagons, pentagonsAt, homeSide);
+                for (var vtx = 0; vtx < nv; vtx += 1)
+                    Q[vtx] = add3(Q[vtx], springs[vtx]);
+            }
+            P = Q;
+        }
+        var flatWorst = 0;
+        var flatTypical = 0;
+        for (var fi = 0; fi < nf; fi += 1)
+        {
+            const fit = fitPlane(P, faces[fi]);
+            var off = 0;
+            for (var vtx in faces[fi])
+                off = max(off, abs(dot3(fit.n, P[vtx]) - fit.d));
+            flatWorst = max(flatWorst, off);
+            flatTypical += off / nf;
+        }
+        var drift = 0;
+        for (var vtx = 0; vtx < nv; vtx += 1)
+            drift = max(drift, length3(sub3(P[vtx], home[vtx])));
+
         var worst = 0;
         var typical = 0;
         var smallest = 1e9;
@@ -473,9 +536,12 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
             smallest = min(smallest, side);
             largest = max(largest, side);
         }
-        const note = nf ~ " faces, " ~ size(pentagons) ~ " pentagons. Pentagon sides differ by " ~
+        const fitNote = made < want ? " (asked for " ~ 2 * want ~ ", but only this many fit)" : "";
+        const note = nf ~ " faces, " ~ size(pentagons) ~ " pentagons" ~ fitNote ~ ". Pentagon sides differ by " ~
             roundToPrecision(typical * 100, 1) ~ "% on average, " ~ roundToPrecision(worst * 100, 1) ~ "% at worst. Pentagon side " ~
-            roundToPrecision(smallest * 1000, 1) ~ " to " ~ roundToPrecision(largest * 1000, 1) ~ " mm.";
+            roundToPrecision(smallest * 1000, 1) ~ " to " ~ roundToPrecision(largest * 1000, 1) ~ " mm. Faces are flat within " ~
+            roundToPrecision(flatTypical * 1000, 2) ~ " mm on average, " ~ roundToPrecision(flatWorst * 1000, 2) ~
+            " mm at worst; corners sit up to " ~ roundToPrecision(drift * 1000, 1) ~ " mm off the tube.";
         setVariable(context, "soccerSkinStats", { "faces" : nf, "pentagons" : size(pentagons), "rows" : M + 1,
                     "averageSideSpreadPercent" : typical * 100, "worstSideSpreadPercent" : worst * 100 });
 
@@ -577,7 +643,7 @@ export const soccerSkin = defineFeature(function(context is Context, id is Id, d
             throw regenError("Failed while " ~ stage ~ ": " ~ toString(error));
         }
     }, { "autoRows" : true, "along" : 40, "pentagonPercent" : 8, "seed" : 1, "passes" : 40, "swapUV" : false,
-          "sizeVariation" : 25, "colorPentagons" : true });
+          "sizeVariation" : 25, "colorPentagons" : true, "flatPasses" : 0 });
 
 // ---------------------------------------------------------------- helpers ----
 
@@ -734,6 +800,66 @@ function dot3(a is array, b is array) returns number
 function length3(a is array) returns number
 {
     return sqrt(dot3(a, a));
+}
+
+// Average side length over all pentagons (0 if there are none).
+function pentagonSide(X is array, faces is array, pentagons is array) returns number
+{
+    var side = 0;
+    for (var fi in pentagons)
+    {
+        const f = faces[fi];
+        for (var k = 0; k < 5; k += 1)
+            side += length3(sub3(X[f[(k + 1) % 5]], X[f[k]])) / 5 / size(pentagons);
+    }
+    return side;
+}
+
+// Moves that pull every pentagon toward a regular one with the given side: springs
+// on its 5 sides and 5 diagonals.
+function pentagonMoves(X is array, faces is array, pentagons is array, pentagonsAt is array, side is number) returns array
+{
+    var move = makeArray(size(X), [0, 0, 0]);
+    for (var fi in pentagons)
+    {
+        const f = faces[fi];
+        for (var k = 0; k < 5; k += 1)
+        {
+            for (var skip = 1; skip <= 2; skip += 1)
+            {
+                const a = f[k];
+                const b = f[(k + skip) % 5];
+                const d = sub3(X[b], X[a]);
+                const len = length3(d);
+                const target = skip == 1 ? side : GOLDEN * side;
+                // Each corner sits on 4 springs per pentagon it belongs to, so share the correction.
+                const fix = scale3(d, 0.5 * (len - target) / len / 4);
+                move[a] = add3(move[a], scale3(fix, 1 / pentagonsAt[a]));
+                move[b] = sub3(move[b], scale3(fix, 1 / pentagonsAt[b]));
+            }
+        }
+    }
+    return move;
+}
+
+// Plane through a face's corners: unit Newell normal n and offset d (n . x = d).
+function fitPlane(P is array, f is array) returns map
+{
+    const count = size(f);
+    var n = [0, 0, 0];
+    var c = [0, 0, 0];
+    for (var k = 0; k < count; k += 1)
+    {
+        const a = P[f[k]];
+        const b = P[f[(k + 1) % count]];
+        n = add3(n, [(a[1] - b[1]) * (a[2] + b[2]), (a[2] - b[2]) * (a[0] + b[0]), (a[0] - b[0]) * (a[1] + b[1])]);
+        c = add3(c, scale3(a, 1 / count));
+    }
+    const len = length3(n);
+    if (len < 1e-15)
+        return { "n" : [0, 0, 0], "d" : 0 };
+    n = scale3(n, 1 / len);
+    return { "n" : n, "d" : dot3(n, c) };
 }
 
 function point(P is array, v is number) returns Vector

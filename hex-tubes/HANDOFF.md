@@ -20,6 +20,7 @@ Two outputs are wanted:
 |---|---|
 | `pentagonOrigamiTube.fs` | **Pentagon feature (v8).** Lives in Feature Studio 1. |
 | `soccerSkin.fs` | **Soccer skin feature.** Lives in the "Soccer skin" Feature Studio. |
+| `pentagonFrameSkin.fs` | **Pentagon frame skin.** Flat regular pentagons (set by diameter) with cut-out connecting shapes; organic or grid layout. Lives in the "Pentagon frame skin" Feature Studio. |
 | `README.md` | User-facing notes on the feature and its options. |
 | `pentagon-organic-preview.png` | The look Remy wants. |
 | `flat-pattern-preview.png` | What the flat pattern should look like. Rendered in Python from the same algorithm. |
@@ -55,6 +56,7 @@ Claude Code on Remy's Mac can reach Onshape through the API. Keys are in `onshap
 | Part Studio 1 | `b35857b7883c52300e570341` |
 | Feature Studio 1 (`pentagonOrigamiTube.fs`) | `162de2a1b289c2461c142705` |
 | Feature Studio "Soccer skin" (`soccerSkin.fs`) | `9a42fdc18ebb8a37cc25c482` |
+| Feature Studio "Pentagon frame skin" (`pentagonFrameSkin.fs`) | `651c48def67875bfee100a00` |
 
 - Pushing a `.fs` file to its Feature Studio rebuilds the Part Studio by itself. With about 800 faces the rebuild takes around two minutes, and API calls wait for it, so use a long timeout.
 - The tube is "Sweep 1", a sheet part. The skins sit just inside it, so render the skin part on its own (`onshape.sh view`), not the whole Part Studio.
