@@ -21,6 +21,7 @@ Two outputs are wanted:
 | `pentagonOrigamiTube.fs` | **Pentagon feature (v8).** Lives in Feature Studio 1. |
 | `soccerSkin.fs` | **Soccer skin feature.** Lives in the "Soccer skin" Feature Studio. |
 | `pentagonFrameSkin.fs` | **Pentagon frame skin.** Flat regular pentagons (set by diameter) with cut-out connecting shapes; organic or grid layout. Lives in the "Pentagon frame skin" Feature Studio. |
+| `pentagonHoleSkin.fs` | **Pentagon hole skin (v1).** A copy of the frame skin v4 (made by the pentagon session, so the frame skin session's file is untouched) with: pentagon size measured edge to edge (7 in), 50 % coverage, a 6 in round hole in each pentagon, a 1.5 in round hole at every corner of 3+ faces, and connecting-shape cutouts with curved sides (1 in rim at corners, 0.5 in at edge middles). Lives in the "Pentagon hole skin" Feature Studio. Round holes are not on the flat pieces yet. |
 | `README.md` | User-facing notes on the feature and its options. |
 | `pentagon-organic-preview.png` | The look Remy wants. |
 | `flat-pattern-preview.png` | What the flat pattern should look like. Rendered in Python from the same algorithm. |
@@ -57,6 +58,7 @@ Claude Code on Remy's Mac can reach Onshape through the API. Keys are in `onshap
 | Feature Studio 1 (`pentagonOrigamiTube.fs`) | `162de2a1b289c2461c142705` |
 | Feature Studio "Soccer skin" (`soccerSkin.fs`) | `9a42fdc18ebb8a37cc25c482` |
 | Feature Studio "Pentagon frame skin" (`pentagonFrameSkin.fs`) | `651c48def67875bfee100a00` |
+| Feature Studio "Pentagon hole skin" (`pentagonHoleSkin.fs`) | `fb40c94056db7e6ac3f642ec` |
 
 - Pushing a `.fs` file to its Feature Studio rebuilds the Part Studio by itself. With about 800 faces the rebuild takes around two minutes, and API calls wait for it, so use a long timeout.
 - The tube is "Sweep 1", a sheet part. The skins sit just inside it, so render the skin part on its own (`onshape.sh view`), not the whole Part Studio.
