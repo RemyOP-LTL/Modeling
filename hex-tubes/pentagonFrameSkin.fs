@@ -1,7 +1,7 @@
 FeatureScript 3095;
 import(path : "onshape/std/common.fs", version : "3095.0");
 
-// Pentagon frame skin — FeatureScript for Onshape   (v2: organic layout)
+// Pentagon frame skin — FeatureScript for Onshape   (v4: fewer pieces, seam allowances, closed darts)
 //
 // Wraps a tube in flat, regular pentagon panels set apart from each other. The
 // gaps between them are filled with small connecting shapes, which can have their
@@ -33,7 +33,9 @@ export enum FrameOutput
     annotation { "Name" : "Surface" }
     SURFACE,
     annotation { "Name" : "Wireframe preview (fast)" }
-    WIRES
+    WIRES,
+    annotation { "Name" : "Surface and flat pieces for cutting (organic layout)" }
+    FLAT
 }
 
 export enum FrameLayout
@@ -57,6 +59,16 @@ const PERCENT_BOUNDS = { (unitless) : [0, 15, 50] } as RealBoundSpec;
 const VARIATION_BOUNDS = { (unitless) : [0, 25, 60] } as RealBoundSpec;
 const SEED_BOUNDS = { (unitless) : [1, 1, 100000] } as IntegerBoundSpec;
 const PASS_BOUNDS = { (unitless) : [0, 40, 500] } as IntegerBoundSpec;
+const PIECE_BOUNDS = { (unitless) : [1, 60, 500] } as IntegerBoundSpec;
+const DART_BOUNDS = { (unitless) : [0, 5, 30] } as RealBoundSpec;
+const ALLOWANCE_BOUNDS = {
+            (meter) : [0, 0.00635, 0.1],
+            (centimeter) : 0.635,
+            (millimeter) : 6.35,
+            (inch) : 0.25,
+            (foot) : 0.0208,
+            (yard) : 0.0069
+        } as LengthBoundSpec;
 
 const DIAMETER_BOUNDS = {
             (meter) : [0.005, 0.127, 5],
@@ -111,6 +123,11 @@ const CAIRO_T = 0.2742918851774318;     // (-2 + sqrt(28)) / 12
 const GAP_PER_CELL = 1.068;
 const GAP_PER_DIAMETER = 0.809;
 const INCH = 0.0254;
+// Plastic sheet the flat pieces are packed onto, and the spacing on it.
+const SHEET_LENGTH = 96 * 0.0254;
+const SHEET_WIDTH = 48 * 0.0254;
+const SHEET_MARGIN = 0.5 * 0.0254;
+const PIECE_GAP = 0.5 * 0.0254;
 // Cutouts whose corners would need to be sharper than this are left out.
 const MIN_HOLE_RADIUS = 0.0025;
 
@@ -133,7 +150,7 @@ export const pentagonFrameSkin = defineFeature(function(context is Context, id i
             annotation { "Name" : "Connecting shape size" }
             isLength(definition.connectorSize, CONNECTOR_BOUNDS);
 
-            annotation { "Name" : "Pentagons (% of faces)" }
+            annotation { "Name" : "Pentagon coverage (% of surface)" }
             isReal(definition.pentagonPercent, PERCENT_BOUNDS);
 
             annotation { "Name" : "Size variation of connecting shapes (%)" }
@@ -144,6 +161,18 @@ export const pentagonFrameSkin = defineFeature(function(context is Context, id i
 
             annotation { "Name" : "Evening passes" }
             isInteger(definition.passes, PASS_BOUNDS);
+
+            annotation { "Name" : "Force pentagons exactly flat" }
+            definition.flatPentagons is boolean;
+
+            annotation { "Name" : "Most panels in one piece" }
+            isInteger(definition.panelsPerPiece, PIECE_BOUNDS);
+
+            annotation { "Name" : "Seam allowance" }
+            isLength(definition.seamAllowance, ALLOWANCE_BOUNDS);
+
+            annotation { "Name" : "Close darts narrower than (degrees)" }
+            isReal(definition.dartClose, DART_BOUNDS);
         }
         else
         {
@@ -169,6 +198,12 @@ export const pentagonFrameSkin = defineFeature(function(context is Context, id i
         annotation { "Name" : "Output" }
         definition.output is FrameOutput;
 
+        if (definition.output == FrameOutput.FLAT)
+        {
+            annotation { "Name" : "Print DXF to console", "Default" : true }
+            definition.printDxf is boolean;
+        }
+
         annotation { "Name" : "Swap around/along (if auto-detect gets it wrong)" }
         definition.swapUV is boolean;
     }
@@ -180,60 +215,99 @@ export const pentagonFrameSkin = defineFeature(function(context is Context, id i
         const swap = detectSwap(context, face) != definition.swapUV;
         // ---- 1. Where the pentagons and connecting shapes go ----
         stage = "laying out pentagons";
-        const layout = definition.layout == FrameLayout.GRID ? gridLayout(context, face, swap, definition) : organicLayout(context, face, swap, definition);
-        const corners = layout.pentagons;
-        const connectors = layout.connectors;
-        const nf = size(corners);
-        const nc = size(connectors);
-        const layoutNote = layout.note;
+        const organic = definition.layout == FrameLayout.ORGANIC;
+        var layout = {};
+        if (organic)
+            layout = organicLayout(context, face, swap, definition);
+        else
+        {
+            const grid = gridLayout(context, face, swap, definition);
+            var flags = makeArray(size(grid.pentagons) + size(grid.connectors), false);
+            for (var k = 0; k < size(grid.pentagons); k += 1)
+                flags[k] = true;
+            layout = { "loops" : concatenateArrays([grid.pentagons, grid.connectors]), "isPentagon" : flags, "note" : grid.note };
+        }
+        const loops = layout.loops;
+        const isPentagon = layout.isPentagon;
+        const nFaces = size(loops);
 
-        // ---- 2. Wireframe preview ----
+        // How far faces are from flat: the largest distance of a corner from the face's best-fit plane.
+        var pentFlat = 0;
+        var pentCount = 0;
+        var connFlat = 0;
+        var connWorst = 0;
+        var connCount = 0;
+        for (var fi = 0; fi < nFaces; fi += 1)
+        {
+            const off = outOfFlat(loops[fi]);
+            if (isPentagon[fi])
+            {
+                pentFlat += off;
+                pentCount += 1;
+            }
+            else
+            {
+                connFlat += off;
+                connWorst = max(connWorst, off);
+                connCount += 1;
+            }
+        }
+        var note = layout.note ~ "Out of flat on average: pentagons " ~ roundToPrecision(pentFlat / max(pentCount, 1) / INCH, 2) ~
+            " in, connecting shapes " ~ roundToPrecision(connFlat / max(connCount, 1) / INCH, 2) ~ " in (worst " ~
+            roundToPrecision(connWorst / INCH, 2) ~ " in). ";
+
+        // ---- 2. Pieces that unfold flat (organic layout only) ----
+        var pieces = undefined;
+        if (organic)
+        {
+            stage = "dividing into pieces";
+            pieces = makePieces(layout.P, layout.faces, isPentagon, definition);
+        }
+
+        // ---- 3. Flat pieces for cutting ----
+        if (definition.output == FrameOutput.FLAT)
+        {
+            if (!organic)
+                throw regenError("Flat pieces need the Organic layout.", ["output"]);
+            stage = "laying out the flat pieces";
+            note = note ~ flatPieces(context, id + "flat", layout.P, layout.faces, isPentagon, pieces, definition);
+        }
+        else if (pieces != undefined)
+            note = note ~ size(pieces.pieces) ~ " pieces. ";
+
+        // ---- 4. Wireframe preview ----
         if (definition.output == FrameOutput.WIRES)
         {
             stage = "drawing the wireframe";
-            for (var fi = 0; fi < nf; fi += 1)
-                opPolyline(context, id + ("pentWire" ~ fi), { "points" : closedLoop(corners[fi]) });
-            for (var ci = 0; ci < nc; ci += 1)
-                opPolyline(context, id + ("connWire" ~ ci), { "points" : closedLoop(connectors[ci]) });
-            reportFeatureInfo(context, id, layoutNote);
+            for (var fi = 0; fi < nFaces; fi += 1)
+                opPolyline(context, id + ("wire" ~ fi), { "points" : closedLoop(loops[fi]) });
+            reportFeatureInfo(context, id, note);
             return;
         }
 
-        // ---- 3. Surfaces: pentagons, then connecting shapes with their cutouts ----
+        // ---- 5. One surface per face ----
         // Onshape requires all operations under one parent Id to be contiguous in
         // history, so every face gets its own parent.
-        stage = "building pentagon faces";
+        stage = "building faces";
         var surfs = [];
         var failed = 0;
-        for (var fi = 0; fi < nf; fi += 1)
+        for (var fi = 0; fi < nFaces; fi += 1)
         {
-            const faceId = id + ("pent" ~ fi);
-            const filled = try silent(fillLoop(context, faceId + "wire", faceId + "surf", corners[fi]));
+            const faceId = id + ("face" ~ fi);
+            const filled = try silent(fillLoop(context, faceId + "wire", faceId + "surf", loops[fi]));
             if (filled != true)
                 failed += 1;
             try silent(opDeleteBodies(context, faceId + "cleanup", { "entities" : qCreatedBy(faceId + "wire", EntityType.BODY) }));
             surfs = append(surfs, qCreatedBy(faceId + "surf", EntityType.BODY));
         }
 
-        stage = "building connecting shapes";
-        for (var ci = 0; ci < nc; ci += 1)
-        {
-            const faceId = id + ("conn" ~ ci);
-            const filled = try silent(fillLoop(context, faceId + "wire", faceId + "surf", connectors[ci]));
-            if (filled != true)
-                failed += 1;
-            try silent(opDeleteBodies(context, faceId + "cleanup", { "entities" : qCreatedBy(faceId + "wire", EntityType.BODY) }));
-            surfs = append(surfs, qCreatedBy(faceId + "surf", EntityType.BODY));
-        }
-
-        // ---- 4. Knit into one surface, named with its face count ----
+        // ---- 6. Knit into one surface, named with its face count ----
         stage = "knitting faces";
         const sheetBodies = qBodyType(qUnion(surfs), BodyType.SHEET);
         if (size(evaluateQuery(context, sheetBodies)) == 0)
             throw regenError("No faces were created.");
-        const skinName = "Skin - " ~ (nf + nc - failed) ~ " faces";
+        const skinName = "Skin - " ~ (nFaces - failed) ~ " faces";
         setProperty(context, { "entities" : sheetBodies, "propertyType" : PropertyType.NAME, "value" : skinName });
-        var note = layoutNote;
         if (failed > 0)
             note = note ~ failed ~ " faces could not be built. ";
         var knitNote = "";
@@ -255,32 +329,57 @@ export const pentagonFrameSkin = defineFeature(function(context is Context, id i
         setProperty(context, { "entities" : knitted, "propertyType" : PropertyType.NAME, "value" : skinName });
         if (knitNote == "" && size(evaluateQuery(context, knitted)) > 1)
             knitNote = "Faces did not all join into one surface. ";
+
+        // Colours: pentagons orange; connecting shapes tinted by piece, so the pieces show.
+        if (pieces != undefined)
+        {
+            const palette = [color(0.78, 0.85, 0.94), color(0.80, 0.90, 0.78), color(0.88, 0.82, 0.94),
+                             color(0.94, 0.89, 0.74), color(0.84, 0.84, 0.84), color(0.76, 0.91, 0.90)];
+            var byColour = makeArray(size(palette), []);
+            for (var fi = 0; fi < nFaces; fi += 1)
+            {
+                if (isPentagon[fi] && definition.colorPentagons)
+                    continue;
+                const c = pieces.colour[pieces.pieceOf[fi]];
+                byColour[c] = append(byColour[c], qCreatedBy(id + ("face" ~ fi), EntityType.FACE));
+            }
+            for (var c = 0; c < size(palette); c += 1)
+            {
+                if (size(byColour[c]) > 0)
+                    setProperty(context, { "entities" : qUnion(byColour[c]), "propertyType" : PropertyType.APPEARANCE, "value" : palette[c] });
+            }
+        }
         if (definition.colorPentagons)
         {
             var pentagonFaces = [];
-            for (var fi = 0; fi < nf; fi += 1)
-                pentagonFaces = append(pentagonFaces, qCreatedBy(id + ("pent" ~ fi), EntityType.FACE));
+            for (var fi = 0; fi < nFaces; fi += 1)
+            {
+                if (isPentagon[fi])
+                    pentagonFaces = append(pentagonFaces, qCreatedBy(id + ("face" ~ fi), EntityType.FACE));
+            }
             setProperty(context, { "entities" : qUnion(pentagonFaces), "propertyType" : PropertyType.APPEARANCE, "value" : color(0.93, 0.42, 0.25) });
         }
 
-        // ---- 5. Cutouts, after joining, so the holes don't get in the way of it ----
+        // ---- 7. Cutouts, after joining, so the holes don't get in the way of it ----
         stage = "cutting out connecting shapes";
         var cut = 0;
         var roomFor = 0;
         var firstHoleError = "";
         var smallestRadius = 1e9;
         var largestRadius = 0;
-        for (var ci = 0; ci < nc && definition.cutOut; ci += 1)
+        for (var fi = 0; fi < nFaces && definition.cutOut; fi += 1)
         {
-            const hole = holeShape(connectors[ci], definition.cutOffset / meter, definition.cutRadius / meter);
+            if (isPentagon[fi])
+                continue;
+            const hole = holeShape(loops[fi], definition.cutOffset / meter, definition.cutRadius / meter);
             if (!hole.fits)
                 continue;
             roomFor += 1;
-            const holeId = id + ("hole" ~ ci);
+            const holeId = id + ("hole" ~ fi);
             var holed = false;
             try
             {
-                holed = cutHole(context, holeId, qCreatedBy(id + ("conn" ~ ci) + "surf", EntityType.FACE), hole);
+                holed = cutHole(context, holeId, qCreatedBy(id + ("face" ~ fi) + "surf", EntityType.FACE), hole);
             }
             catch (holeError)
             {
@@ -298,10 +397,10 @@ export const pentagonFrameSkin = defineFeature(function(context is Context, id i
         }
         if (definition.cutOut)
         {
-            note = note ~ "Cutouts in " ~ cut ~ " of " ~ nc ~ " connecting shapes";
+            note = note ~ "Cutouts in " ~ cut ~ " of " ~ connCount ~ " connecting shapes";
             if (cut > 0)
                 note = note ~ ", corner radius " ~ roundToPrecision(smallestRadius / INCH, 2) ~ " to " ~ roundToPrecision(largestRadius / INCH, 2) ~ " in";
-            note = note ~ " (" ~ (nc - roomFor) ~ " were too small for one). ";
+            note = note ~ " (" ~ (connCount - roomFor) ~ " were too small for one). ";
             if (firstHoleError != "")
                 note = note ~ "Some cutouts failed: " ~ firstHoleError ~ ". ";
         }
@@ -316,7 +415,9 @@ export const pentagonFrameSkin = defineFeature(function(context is Context, id i
             throw regenError("Failed while " ~ stage ~ ": " ~ toString(error));
         }
     }, { "cutOut" : true, "cutOffset" : 0.5 * inch, "cutRadius" : 0.5 * inch, "colorPentagons" : true, "swapUV" : false,
-          "connectorSize" : 5 * inch, "pentagonPercent" : 15, "sizeVariation" : 25, "seed" : 1, "passes" : 40, "gap" : 2 * inch });
+          "connectorSize" : 5 * inch, "pentagonPercent" : 15, "sizeVariation" : 25, "seed" : 1, "passes" : 40, "gap" : 2 * inch,
+          "flatPentagons" : false, "panelsPerPiece" : 60, "printDxf" : true,
+          "seamAllowance" : 0.25 * inch, "dartClose" : 5 });
 
 // ---------------------------------------------------------------- layouts ----
 
@@ -404,7 +505,9 @@ function organicLayout(context is Context, face is Query, swap is boolean, defin
     var blocked = endFace;
     var pentagonFlag = makeArray(nf, false);
     var pentagons = [];
-    const want = round(definition.pentagonPercent / 100 * nf / 2);
+    // Pentagon count from the share of the tube's surface they should cover.
+    const pentagonArea = 0.5944103227 * diameter * diameter;   // (5 / 8) * sin(72 degrees) * d^2
+    const want = round(definition.pentagonPercent / 100 * C * L / pentagonArea / 2);
     var rng = definition.seed * 7919 + 13;
     var made = 0;
     // First try to keep pairs at least one hexagon apart, so pentagons have room to
@@ -678,29 +781,29 @@ function organicLayout(context is Context, face is Query, swap is boolean, defin
     for (var vtx = 0; vtx < nv; vtx += 1)
         P[vtx] = meters(planes[vtx].origin);
 
-    // ---- 7. Exactly flat, regular pentagons. Pentagons never share a corner, so
-    //         each corner is moved by at most one of them. ----
-    for (var fi in pentagons)
+    // ---- 7. Optionally, exactly flat regular pentagons. Pentagons never share a
+    //         corner, so each corner is moved by at most one of them. ----
+    if (definition.flatPentagons)
     {
-        const five = regularPentagon(P, faces[fi], diameter / 2);
-        for (var k = 0; k < 5; k += 1)
-            P[faces[fi][k]] = five[k];
+        for (var fi in pentagons)
+        {
+            const five = regularPentagon(P, faces[fi], diameter / 2);
+            for (var k = 0; k < 5; k += 1)
+                P[faces[fi][k]] = five[k];
+        }
     }
-    var pentagonLoops = [];
-    var connectorLoops = [];
+    var loops = [];
     for (var fi = 0; fi < nf; fi += 1)
     {
         var loop = [];
         for (var vtx in faces[fi])
             loop = append(loop, P[vtx]);
-        if (isPentagon[fi])
-            pentagonLoops = append(pentagonLoops, loop);
-        else
-            connectorLoops = append(connectorLoops, loop);
+        loops = append(loops, loop);
     }
     const fitNote = made < want ? " (asked for " ~ 2 * want ~ ", only this many fit)" : "";
-    return { "pentagons" : pentagonLoops, "connectors" : connectorLoops,
-            "note" : N ~ " around, " ~ (M + 1) ~ " rows: " ~ size(pentagonLoops) ~ " pentagons" ~ fitNote ~ " and " ~ size(connectorLoops) ~ " connecting shapes. " };
+    return { "loops" : loops, "isPentagon" : isPentagon, "faces" : faces, "P" : P, "vertexCount" : nv,
+            "note" : N ~ " around, " ~ (M + 1) ~ " rows: " ~ size(pentagons) ~ " pentagons covering " ~
+                roundToPrecision(100 * size(pentagons) * pentagonArea / (C * L), 0) ~ "% of the surface" ~ fitNote ~ " and " ~ (nf - size(pentagons)) ~ " connecting shapes. " };
 }
 
 // A flat regular pentagon of circumradius `reach`, in the best-fit plane of face f's
@@ -920,6 +1023,713 @@ function gridLayout(context is Context, face is Query, swap is boolean, definiti
     return { "pentagons" : corners, "connectors" : connectors, "note" : layoutNote };
 }
 
+// ----------------------------------------------------------------- pieces ----
+
+// Splits the faces into as few pieces as possible that each unfold flat onto a
+// sheet. A piece grows outward from a seed face, joining each new face along a
+// single fold edge, so the folds form a tree and the piece can always be laid flat.
+// A face is only added if, laid flat, it stays clear of the rest of the piece (room
+// for seam allowances) and the piece still fits on a sheet. Returns:
+//   pieceOf[face], pieces[{ faces, hinges[{ parent, child, a, b }], place{face: 2D corners} }],
+//   colour[piece] (0-5, neighbouring pieces differ where possible), edgeFaces{edge key: faces}.
+function makePieces(P is array, faces is array, isPentagon is array, definition is map) returns map
+{
+    const nf = size(faces);
+    const maxSize = definition.panelsPerPiece;
+    const clearance = 2 * definition.seamAllowance / meter;
+    var edgeFaces = {};
+    for (var fi = 0; fi < nf; fi += 1)
+    {
+        const f = faces[fi];
+        for (var k = 0; k < size(f); k += 1)
+        {
+            const key = pieceEdgeKey(f[k], f[(k + 1) % size(f)]);
+            edgeFaces[key] = append(edgeFaces[key] == undefined ? [] : edgeFaces[key], fi);
+        }
+    }
+    var pieceOf = makeArray(nf, -1);
+    var pieces = [];
+    for (var seed = 0; seed < nf; seed += 1)
+    {
+        if (pieceOf[seed] != -1)
+            continue;
+        const p = size(pieces);
+        var members = [seed];
+        var hinges = [];
+        var place = {};
+        place[seed] = flattenFace(P, faces[seed]);
+        var points = place[seed];
+        pieceOf[seed] = p;
+        var head = 0;
+        while (head < size(members) && size(members) < maxSize)
+        {
+            const fi = members[head];
+            head += 1;
+            const f = faces[fi];
+            for (var k = 0; k < size(f); k += 1)
+            {
+                const a = f[k];
+                const b = f[(k + 1) % size(f)];
+                for (var g in edgeFaces[pieceEdgeKey(a, b)])
+                {
+                    if (g == fi || pieceOf[g] != -1 || size(members) >= maxSize)
+                        continue;
+                    // Lay g flat against its fold edge.
+                    const child = flattenFace(P, faces[g]);
+                    const ca = child[listIndex(faces[g], a)];
+                    const cb = child[listIndex(faces[g], b)];
+                    const pa = place[fi][listIndex(f, a)];
+                    const pb = place[fi][listIndex(f, b)];
+                    const turn = atan2(pb[1] - pa[1], pb[0] - pa[0]) - atan2(cb[1] - ca[1], cb[0] - ca[0]);
+                    var moved = [];
+                    for (var pt in child)
+                        moved = append(moved, add2(pa, rotate2(sub2(pt, ca), turn)));
+                    // It must not run into the rest of the piece.
+                    var clear = true;
+                    for (var h in members)
+                    {
+                        if (h == fi)
+                            continue;
+                        if (size(listInBoth(faces[h], faces[g])) > 0)
+                        {
+                            // Neighbours meet at a corner. A thin overlap wedge there is fine
+                            // (it gets closed like a dart); only a real overlap counts.
+                            if (convexOverlap(shrink2(place[h], 0.9), shrink2(moved, 0.9), 0))
+                                clear = false;
+                        }
+                        else if (convexOverlap(place[h], moved, clearance))
+                            clear = false;
+                        if (!clear)
+                            break;
+                    }
+                    // And the piece must still fit on a sheet, with room for seam allowances.
+                    if (clear && !fitsSheet(concatenateArrays([points, moved]), clearance))
+                        clear = false;
+                    if (!clear)
+                        continue;
+                    pieceOf[g] = p;
+                    members = append(members, g);
+                    hinges = append(hinges, { "parent" : fi, "child" : g, "a" : a, "b" : b });
+                    place[g] = moved;
+                    points = concatenateArrays([points, moved]);
+                }
+            }
+        }
+        pieces = append(pieces, { "faces" : members, "hinges" : hinges, "place" : place });
+    }
+    // Colour pieces so that neighbours differ where possible.
+    var touching = makeArray(size(pieces), []);
+    for (var entry in edgeFaces)
+    {
+        if (size(entry.value) != 2)
+            continue;
+        const p1 = pieceOf[entry.value[0]];
+        const p2 = pieceOf[entry.value[1]];
+        if (p1 != p2)
+        {
+            touching[p1] = append(touching[p1], p2);
+            touching[p2] = append(touching[p2], p1);
+        }
+    }
+    var colour = makeArray(size(pieces), -1);
+    for (var p = 0; p < size(pieces); p += 1)
+    {
+        var used = makeArray(6, false);
+        for (var q in touching[p])
+        {
+            if (colour[q] >= 0)
+                used[colour[q]] = true;
+        }
+        colour[p] = p % 6;
+        for (var c = 5; c >= 0; c -= 1)
+        {
+            if (!used[c])
+                colour[p] = c;
+        }
+    }
+    return { "pieceOf" : pieceOf, "pieces" : pieces, "colour" : colour, "edgeFaces" : edgeFaces };
+}
+
+function pieceEdgeKey(a is number, b is number) returns string
+{
+    return "" ~ min(a, b) ~ "_" ~ max(a, b);
+}
+
+// True when two convex polygons overlap, or come within `gap` of each other.
+function convexOverlap(A is array, B is array, gap is number) returns boolean
+{
+    for (var poly in [A, B])
+    {
+        for (var k = 0; k < size(poly); k += 1)
+        {
+            const e = sub2(poly[(k + 1) % size(poly)], poly[k]);
+            const len = sqrt(e[0] * e[0] + e[1] * e[1]);
+            if (len < 1e-12)
+                continue;
+            const axis = [-e[1] / len, e[0] / len];
+            var aLo = 1e9;
+            var aHi = -1e9;
+            var bLo = 1e9;
+            var bHi = -1e9;
+            for (var p in A)
+            {
+                aLo = min(aLo, p[0] * axis[0] + p[1] * axis[1]);
+                aHi = max(aHi, p[0] * axis[0] + p[1] * axis[1]);
+            }
+            for (var p in B)
+            {
+                bLo = min(bLo, p[0] * axis[0] + p[1] * axis[1]);
+                bHi = max(bHi, p[0] * axis[0] + p[1] * axis[1]);
+            }
+            if (bLo - aHi >= gap || aLo - bHi >= gap)
+                return false;   // separated along this axis
+        }
+    }
+    return true;
+}
+
+// A polygon scaled about its centre.
+function shrink2(poly is array, factor is number) returns array
+{
+    const c = centroid2(poly);
+    var out = [];
+    for (var p in poly)
+        out = append(out, add2(c, [(p[0] - c[0]) * factor, (p[1] - c[1]) * factor]));
+    return out;
+}
+
+// True when the points, turned to their long direction and padded by `pad`, fit on a sheet.
+function fitsSheet(points is array, pad is number) returns boolean
+{
+    const bounds = alignedBox(points);
+    return bounds.w + 2 * pad <= SHEET_LENGTH - 2 * SHEET_MARGIN && bounds.h + 2 * pad <= SHEET_WIDTH - 2 * SHEET_MARGIN;
+}
+
+// Size of the bounds around the points once turned so their long direction runs along x.
+function alignedBox(points is array) returns map
+{
+    const mean = centroid2(points);
+    var sxx = 0;
+    var syy = 0;
+    var sxy = 0;
+    for (var p in points)
+    {
+        const d = sub2(p, mean);
+        sxx += d[0] * d[0];
+        syy += d[1] * d[1];
+        sxy += d[0] * d[1];
+    }
+    const spin = -0.5 * atan2(2 * sxy, sxx - syy);
+    var lo = [1e9, 1e9];
+    var hi = [-1e9, -1e9];
+    for (var p in points)
+    {
+        const r = rotate2(sub2(p, mean), spin);
+        lo = [min(lo[0], r[0]), min(lo[1], r[1])];
+        hi = [max(hi[0], r[0]), max(hi[1], r[1])];
+    }
+    return { "w" : hi[0] - lo[0], "h" : hi[1] - lo[1], "spin" : spin, "mean" : mean };
+}
+
+// A face laid flat with every edge its true 3D length: the face is split into a fan
+// of triangles from its first corner, and the triangles are unfolded into one plane.
+// A face that is slightly cupped in 3D comes out as a flat shape the sheet bends into.
+// Corners run counter-clockwise.
+function flattenFace(P is array, f is array) returns array
+{
+    const count = size(f);
+    var out = [[0, 0], [length3(sub3(P[f[1]], P[f[0]])), 0]];
+    for (var k = 2; k < count; k += 1)
+    {
+        const d0 = length3(sub3(P[f[k]], P[f[0]]));
+        const d1 = length3(sub3(P[f[k]], P[f[k - 1]]));
+        const base = out[k - 1];
+        const L = sqrt(base[0] * base[0] + base[1] * base[1]);
+        const u = [base[0] / L, base[1] / L];
+        const along = (d0 * d0 - d1 * d1 + L * L) / (2 * L);
+        const up = sqrt(max(d0 * d0 - along * along, 0));
+        out = append(out, [u[0] * along - u[1] * up, u[1] * along + u[0] * up]);
+    }
+    return out;
+}
+
+// Union-find over corner copies.
+function rootOf(parent is array, k is number) returns number
+{
+    var r = k;
+    while (parent[r] != r)
+        r = parent[r];
+    return r;
+}
+
+// Lays every piece out flat, closes narrow darts, adds seam allowances, packs the
+// pieces onto 48 x 96 in sheets beside the tube, and draws them as sketches on the
+// Top plane: CUT (outlines, seam allowances and cutouts), SCORE (folds between faces),
+// SEAM (where each seam allowance folds) and the sheet outlines. Optionally prints the
+// same as a DXF (mm). Returns a note for the feature.
+function flatPieces(context is Context, id is Id, P is array, faces is array, isPentagon is array, pieces is map, definition is map) returns string
+{
+    const offset = definition.cutOffset / meter;
+    const radius = definition.cutRadius / meter;
+    const allowance = definition.seamAllowance / meter;
+    const dartLimit = definition.dartClose * degree;
+    var laid = [];
+    var dartsClosed = 0;
+    var worstStrain = 0;
+    var tabs = 0;
+    for (var pi = 0; pi < size(pieces.pieces); pi += 1)
+    {
+        const piece = pieces.pieces[pi];
+        // One entry per face corner; corners joined by folds (or closed darts) share a root.
+        var slot = {};
+        var parent = [];
+        var pos = [];
+        var inPiece = {};
+        for (var fi in piece.faces)
+        {
+            inPiece[fi] = true;
+            const f = faces[fi];
+            for (var k = 0; k < size(f); k += 1)
+            {
+                slot[fi ~ "_" ~ f[k]] = size(parent);
+                parent = append(parent, size(parent));
+                pos = append(pos, piece.place[fi][k]);
+            }
+        }
+        var joined = {};
+        for (var h in piece.hinges)
+        {
+            for (var v in [h.a, h.b])
+            {
+                const r1 = rootOf(parent, slot[h.parent ~ "_" ~ v]);
+                const r2 = rootOf(parent, slot[h.child ~ "_" ~ v]);
+                if (r1 != r2)
+                    parent[r2] = r1;
+            }
+            joined[pieceEdgeKey(h.a, h.b)] = "fold";
+        }
+        // Darts: an edge whose two faces are both in this piece but not folded together.
+        // If its copies meet at one end and open by no more than the limit, pull the
+        // other ends together.
+        var closedAny = false;
+        for (var pass = 0; pass < 3; pass += 1)
+        {
+            for (var entry in pieces.edgeFaces)
+            {
+                const two = entry.value;
+                if (size(two) != 2 || inPiece[two[0]] != true || inPiece[two[1]] != true || joined[entry.key] != undefined)
+                    continue;
+                const f = faces[two[0]];
+                var ends = [];
+                for (var k = 0; k < size(f); k += 1)
+                {
+                    if (pieceEdgeKey(f[k], f[(k + 1) % size(f)]) == entry.key)
+                        ends = [f[k], f[(k + 1) % size(f)]];
+                }
+                for (var e = 0; e < 2; e += 1)
+                {
+                    const apex = ends[e];
+                    const tip = ends[1 - e];
+                    if (rootOf(parent, slot[two[0] ~ "_" ~ apex]) != rootOf(parent, slot[two[1] ~ "_" ~ apex]))
+                        continue;
+                    const o = pos[rootOf(parent, slot[two[0] ~ "_" ~ apex])];
+                    const t1 = pos[slot[two[0] ~ "_" ~ tip]];
+                    const t2 = pos[slot[two[1] ~ "_" ~ tip]];
+                    const d1 = sub2(t1, o);
+                    const d2 = sub2(t2, o);
+                    const opening = abs(atan2(d1[0] * d2[1] - d1[1] * d2[0], d1[0] * d2[0] + d1[1] * d2[1]));
+                    if (opening <= dartLimit)
+                    {
+                        const r1 = rootOf(parent, slot[two[0] ~ "_" ~ tip]);
+                        const r2 = rootOf(parent, slot[two[1] ~ "_" ~ tip]);
+                        if (r1 != r2)
+                        {
+                            pos[r1] = scale2(add2(pos[r1], pos[r2]), 0.5);
+                            parent[r2] = r1;
+                        }
+                        joined[entry.key] = "dart";
+                        dartsClosed += 1;
+                        closedAny = true;
+                    }
+                    break;
+                }
+            }
+        }
+        // Gather each corner at its root's position, then, if darts were closed, ease
+        // the piece so every edge (and each face's fan diagonals) is close to its true length.
+        var at = makeArray(size(parent), [0, 0]);
+        var count = makeArray(size(parent), 0);
+        for (var k = 0; k < size(parent); k += 1)
+        {
+            const r = rootOf(parent, k);
+            at[r] = add2(at[r], pos[k]);
+            count[r] += 1;
+        }
+        for (var k = 0; k < size(parent); k += 1)
+        {
+            if (count[k] > 0)
+                at[k] = scale2(at[k], 1 / count[k]);
+        }
+        var springs = [];
+        for (var fi in piece.faces)
+        {
+            const f = faces[fi];
+            for (var k = 0; k < size(f); k += 1)
+            {
+                const next = (k + 1) % size(f);
+                springs = append(springs, [rootOf(parent, slot[fi ~ "_" ~ f[k]]), rootOf(parent, slot[fi ~ "_" ~ f[next]]), length3(sub3(P[f[next]], P[f[k]]))]);
+                if (k >= 2)
+                    springs = append(springs, [rootOf(parent, slot[fi ~ "_" ~ f[0]]), rootOf(parent, slot[fi ~ "_" ~ f[k]]), length3(sub3(P[f[k]], P[f[0]]))]);
+            }
+        }
+        for (var it = 0; it < 200 && closedAny; it += 1)
+        {
+            var push = makeArray(size(parent), [0, 0]);
+            var hits = makeArray(size(parent), 0);
+            for (var s in springs)
+            {
+                const d = sub2(at[s[1]], at[s[0]]);
+                const len = sqrt(d[0] * d[0] + d[1] * d[1]);
+                const fix = scale2(d, 0.5 * (len - s[2]) / len);
+                push[s[0]] = add2(push[s[0]], fix);
+                push[s[1]] = sub2(push[s[1]], fix);
+                hits[s[0]] += 1;
+                hits[s[1]] += 1;
+            }
+            for (var k = 0; k < size(parent); k += 1)
+            {
+                if (hits[k] > 0)
+                    at[k] = add2(at[k], scale2(push[k], 1 / hits[k]));
+            }
+        }
+        for (var s in springs)
+        {
+            const d = sub2(at[s[1]], at[s[0]]);
+            worstStrain = max(worstStrain, abs(sqrt(d[0] * d[0] + d[1] * d[1]) - s[2]) / s[2]);
+        }
+        var place = {};
+        for (var fi in piece.faces)
+        {
+            var loop = [];
+            for (var v in faces[fi])
+                loop = append(loop, at[rootOf(parent, slot[fi ~ "_" ~ v])]);
+            place[fi] = loop;
+        }
+
+        // Edges: folds and closed darts are scored once. Other edges are cut; those that
+        // join another piece (or this one) get a seam allowance outside them.
+        var cutSegs = [];
+        var scoreSegs = [];
+        var seamSegs = [];
+        var outline = [];
+        var scored = {};
+        for (var fi in piece.faces)
+        {
+            const f = faces[fi];
+            const flat = place[fi];
+            for (var k = 0; k < size(f); k += 1)
+            {
+                const key = pieceEdgeKey(f[k], f[(k + 1) % size(f)]);
+                const a = flat[k];
+                const b = flat[(k + 1) % size(f)];
+                if (joined[key] != undefined)
+                {
+                    if (scored[key] != true)
+                    {
+                        scoreSegs = append(scoreSegs, { "kind" : "line", "pts" : [a, b] });
+                        scored[key] = true;
+                    }
+                }
+                else
+                    outline = append(outline, { "a" : a, "b" : b, "joins" : size(pieces.edgeFaces[key]) == 2 });
+            }
+            if (definition.cutOut && !isPentagon[fi])
+            {
+                var flat3 = [];
+                for (var pt in flat)
+                    flat3 = append(flat3, [pt[0], pt[1], 0]);
+                const hole = holeShape(flat3, offset, radius);
+                if (hole.fits)
+                {
+                    const yAxis = cross3(hole.normal, hole.xAxis);
+                    for (var seg in holeSegments(hole))
+                    {
+                        var pts = [];
+                        for (var pt in seg.pts)
+                        {
+                            const w = add3(hole.origin, add3(scale3(hole.xAxis, pt[0]), scale3(yAxis, pt[1])));
+                            pts = append(pts, [w[0], w[1]]);
+                        }
+                        cutSegs = append(cutSegs, { "kind" : seg.kind, "pts" : pts });
+                    }
+                }
+            }
+        }
+        // Seam allowances: a strip `allowance` wide outside each joining edge. Its ends
+        // are cut back where the outline turns inward, so neighbouring strips don't
+        // collide; in tight corners the strip gets shorter or is left off.
+        for (var e in outline)
+        {
+            if (!e.joins || allowance <= 0)
+            {
+                cutSegs = append(cutSegs, { "kind" : "line", "pts" : [e.a, e.b] });
+                continue;
+            }
+            const along = sub2(e.b, e.a);
+            const len = sqrt(along[0] * along[0] + along[1] * along[1]);
+            const t = scale2(along, 1 / len);
+            const n = [t[1], -t[0]];   // faces lie to the left, so outside is to the right
+            var before = undefined;
+            var after = undefined;
+            for (var o in outline)
+            {
+                if (dist2(o.b, e.a) < 1e-6 && dist2(o.a, e.b) > 1e-6)
+                    before = o.a;
+                if (dist2(o.a, e.b) < 1e-6 && dist2(o.b, e.a) > 1e-6)
+                    after = o.b;
+            }
+            const backA = before == undefined ? 0 : cutBack(t, unit2(before, e.a), allowance, false);
+            const backB = after == undefined ? 0 : cutBack(scale2(t, -1), unit2(after, e.b), allowance, true);
+            if (len - backA - backB < 2 * allowance + 0.002)
+            {
+                cutSegs = append(cutSegs, { "kind" : "line", "pts" : [e.a, e.b] });
+                continue;
+            }
+            const A = add2(e.a, scale2(t, backA));
+            const B = sub2(e.b, scale2(t, backB));
+            const A2 = add2(A, add2(scale2(n, allowance), scale2(t, allowance)));
+            const B2 = add2(B, sub2(scale2(n, allowance), scale2(t, allowance)));
+            if (backA > 1e-6)
+                cutSegs = append(cutSegs, { "kind" : "line", "pts" : [e.a, A] });
+            cutSegs = concatenateArrays([cutSegs, [{ "kind" : "line", "pts" : [A, A2] }, { "kind" : "line", "pts" : [A2, B2] }, { "kind" : "line", "pts" : [B2, B] }]]);
+            if (backB > 1e-6)
+                cutSegs = append(cutSegs, { "kind" : "line", "pts" : [B, e.b] });
+            seamSegs = append(seamSegs, { "kind" : "line", "pts" : [A, B] });
+            tabs += 1;
+        }
+
+        // Turn the piece so its long direction runs along the sheet, and move it to the origin.
+        var outlinePoints = [];
+        for (var seg in cutSegs)
+            outlinePoints = concatenateArrays([outlinePoints, seg.pts]);
+        const bounds = alignedBox(outlinePoints);
+        cutSegs = turnSegments(cutSegs, bounds.mean, bounds.spin);
+        scoreSegs = turnSegments(scoreSegs, bounds.mean, bounds.spin);
+        seamSegs = turnSegments(seamSegs, bounds.mean, bounds.spin);
+        var lo = [1e9, 1e9];
+        var hi = [-1e9, -1e9];
+        for (var seg in cutSegs)
+        {
+            for (var pt in seg.pts)
+            {
+                lo = [min(lo[0], pt[0]), min(lo[1], pt[1])];
+                hi = [max(hi[0], pt[0]), max(hi[1], pt[1])];
+            }
+        }
+        const label = add2(bounds.mean, rotate2(sub2(centroid2(place[piece.faces[0]]), bounds.mean), bounds.spin));
+        const shift = [-lo[0], -lo[1]];
+        laid = append(laid, { "cut" : moveSegments(cutSegs, shift), "score" : moveSegments(scoreSegs, shift), "seam" : moveSegments(seamSegs, shift),
+                    "label" : add2(label, shift), "w" : hi[0] - lo[0], "h" : hi[1] - lo[1], "n" : pi + 1 });
+    }
+
+    // Pack: tallest pieces first, in rows along each sheet; a new sheet when one is full.
+    var order = [];
+    for (var k = 0; k < size(laid); k += 1)
+        order = append(order, { "k" : k, "h" : laid[k].h });
+    order = sort(order, function(a, b)
+        {
+            return b.h - a.h;
+        });
+    // Sheets sit side by side on the Top plane, clear of the tube.
+    const baseX = 0.5;
+    var sheet = 0;
+    var x = SHEET_MARGIN;
+    var y = SHEET_MARGIN;
+    var rowHeight = 0;
+    var tooBig = 0;
+    var allCut = [];
+    var allScore = [];
+    var allSeam = [];
+    var labels = [];
+    for (var item in order)
+    {
+        const piece = laid[item.k];
+        if (piece.w > SHEET_LENGTH - 2 * SHEET_MARGIN || piece.h > SHEET_WIDTH - 2 * SHEET_MARGIN)
+            tooBig += 1;
+        if (x + piece.w > SHEET_LENGTH - SHEET_MARGIN && x > SHEET_MARGIN)
+        {
+            x = SHEET_MARGIN;
+            y += rowHeight + PIECE_GAP;
+            rowHeight = 0;
+        }
+        if (y + piece.h > SHEET_WIDTH - SHEET_MARGIN && y > SHEET_MARGIN)
+        {
+            sheet += 1;
+            x = SHEET_MARGIN;
+            y = SHEET_MARGIN;
+            rowHeight = 0;
+        }
+        const at = [baseX + sheet * (SHEET_LENGTH + 0.25) + x, y];
+        allCut = concatenateArrays([allCut, moveSegments(piece.cut, at)]);
+        allScore = concatenateArrays([allScore, moveSegments(piece.score, at)]);
+        allSeam = concatenateArrays([allSeam, moveSegments(piece.seam, at)]);
+        labels = append(labels, { "text" : "P" ~ piece.n, "at" : add2(piece.label, at) });
+        x += piece.w + PIECE_GAP;
+        rowHeight = max(rowHeight, piece.h);
+    }
+    const sheetCount = sheet + 1;
+    var sheetSegs = [];
+    for (var k = 0; k < sheetCount; k += 1)
+    {
+        const x0 = baseX + k * (SHEET_LENGTH + 0.25);
+        const c = [[x0, 0], [x0 + SHEET_LENGTH, 0], [x0 + SHEET_LENGTH, SHEET_WIDTH], [x0, SHEET_WIDTH]];
+        for (var e = 0; e < 4; e += 1)
+            sheetSegs = append(sheetSegs, { "kind" : "line", "pts" : [c[e], c[(e + 1) % 4]] });
+    }
+
+    const top = plane(vector(0, 0, 0) * meter, vector(0, 0, 1), vector(1, 0, 0));
+    for (var layer in [["cut", allCut], ["score", allScore], ["seam", allSeam], ["sheets", sheetSegs]])
+    {
+        if (size(layer[1]) == 0)
+            continue;
+        const sk = newSketchOnPlane(context, id + layer[0], { "sketchPlane" : top });
+        drawSegments(sk, "s", layer[1]);
+        skSolve(sk);
+    }
+    if (definition.printDxf)
+        printPiecesDxf([["CUT", allCut], ["SCORE", allScore], ["SEAM", allSeam], ["SHEET", sheetSegs]], labels);
+
+    var note = size(laid) ~ " pieces on " ~ sheetCount ~ " sheets of 48 x 96 in";
+    if (tooBig > 0)
+        note = note ~ " (" ~ tooBig ~ " pieces are bigger than a sheet)";
+    note = note ~ ". " ~ tabs ~ " seam allowances. " ~ dartsClosed ~ " darts closed; edges stretched or squeezed by up to " ~
+        roundToPrecision(worstStrain * 100, 1) ~ "% to do it. Labels P1 to P" ~ size(laid) ~ " are in the DXF. ";
+    if (definition.printDxf)
+        note = note ~ "DXF printed to the FeatureScript console. ";
+    return note;
+}
+
+// How far back from a corner a seam allowance must start so it doesn't run into the
+// neighbouring edge's allowance. `out` points along this edge away from the corner,
+// `other` along the neighbouring outline edge. `atEnd` is true at the edge's far end,
+// where the outside lies to the left of `out` instead of the right.
+function cutBack(out is array, other is array, allowance is number, atEnd is boolean) returns number
+{
+    // Opening angle on the outside of the piece between the two edges.
+    const crossing = out[0] * other[1] - out[1] * other[0];
+    const ccw = atan2(crossing, out[0] * other[0] + out[1] * other[1]) / radian;
+    var turn = ccw < 0 ? ccw + 2 * PI : ccw;
+    const opening = atEnd ? turn : 2 * PI - turn;
+    if (opening >= PI - 1e-9)
+        return 0;
+    return allowance / tan(opening / 2 * radian);
+}
+
+function scale2(a is array, s is number) returns array
+{
+    return [a[0] * s, a[1] * s];
+}
+
+function dist2(a is array, b is array) returns number
+{
+    return sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]));
+}
+
+function turnSegments(segs is array, about is array, angle) returns array
+{
+    var out = [];
+    for (var seg in segs)
+    {
+        var pts = [];
+        for (var pt in seg.pts)
+            pts = append(pts, add2(about, rotate2(sub2(pt, about), angle)));
+        out = append(out, { "kind" : seg.kind, "pts" : pts });
+    }
+    return out;
+}
+
+function moveSegments(segs is array, shift is array) returns array
+{
+    var out = [];
+    for (var seg in segs)
+    {
+        var pts = [];
+        for (var pt in seg.pts)
+            pts = append(pts, add2(pt, shift));
+        out = append(out, { "kind" : seg.kind, "pts" : pts });
+    }
+    return out;
+}
+
+function add2(a is array, b is array) returns array
+{
+    return [a[0] + b[0], a[1] + b[1]];
+}
+
+function sub2(a is array, b is array) returns array
+{
+    return [a[0] - b[0], a[1] - b[1]];
+}
+
+function rotate2(p is array, angle) returns array
+{
+    const c = cos(angle);
+    const s = sin(angle);
+    return [p[0] * c - p[1] * s, p[0] * s + p[1] * c];
+}
+
+function centroid2(pts is array) returns array
+{
+    var c = [0, 0];
+    for (var p in pts)
+        c = [c[0] + p[0] / size(pts), c[1] + p[1] / size(pts)];
+    return c;
+}
+
+// Minimal ASCII DXF (R12) in millimeters: the given layers plus LABELS.
+// Copy everything between the markers into a .dxf file.
+function printPiecesDxf(layers is array, labels is array)
+{
+    println("----- DXF START (copy the lines below into coral-pieces.dxf) -----");
+    println("0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES");
+    for (var layer in layers)
+    {
+        for (var seg in layer[1])
+            println(dxfEntity(layer[0], seg));
+    }
+    for (var l in labels)
+        println("0\nTEXT\n8\nLABELS\n10\n" ~ dxfMm(l.at[0]) ~ "\n20\n" ~ dxfMm(l.at[1]) ~ "\n30\n0\n40\n12\n1\n" ~ l.text);
+    println("0\nENDSEC\n0\nEOF");
+    println("----- DXF END -----");
+}
+
+function dxfEntity(layer is string, seg is map) returns string
+{
+    const p = seg.pts;
+    if (seg.kind == "line")
+        return "0\nLINE\n8\n" ~ layer ~ "\n10\n" ~ dxfMm(p[0][0]) ~ "\n20\n" ~ dxfMm(p[0][1]) ~ "\n30\n0\n11\n" ~
+            dxfMm(p[1][0]) ~ "\n21\n" ~ dxfMm(p[1][1]) ~ "\n31\n0";
+    // DXF arcs run counter-clockwise from the start angle to the end angle.
+    const c = p[3];
+    const r = sqrt((p[0][0] - c[0]) ^ 2 + (p[0][1] - c[1]) ^ 2);
+    var a1 = atan2(p[0][1] - c[1], p[0][0] - c[0]) / degree;
+    var a2 = atan2(p[2][1] - c[1], p[2][0] - c[0]) / degree;
+    const ccw = (p[0][0] - c[0]) * (p[2][1] - c[1]) - (p[0][1] - c[1]) * (p[2][0] - c[0]) > 0;
+    if (!ccw)
+    {
+        const t = a1;
+        a1 = a2;
+        a2 = t;
+    }
+    return "0\nARC\n8\n" ~ layer ~ "\n10\n" ~ dxfMm(c[0]) ~ "\n20\n" ~ dxfMm(c[1]) ~ "\n30\n0\n40\n" ~ dxfMm(r) ~
+        "\n50\n" ~ roundToPrecision(a1, 4) ~ "\n51\n" ~ roundToPrecision(a2, 4);
+}
+
+function dxfMm(x is number) returns string
+{
+    return "" ~ roundToPrecision(x * 1000, 3);
+}
+
 // ---------------------------------------------------------------- cutouts ----
 
 // The cutout for a connecting shape: its outline moved in by `offset`, with corners
@@ -1013,44 +1823,8 @@ function cutHole(context is Context, faceId is Id, target is Query, hole is map)
 {
     const origin = vector(hole.origin[0], hole.origin[1], hole.origin[2]) * meter;
     const sketchPlane = plane(origin, vector(hole.normal[0], hole.normal[1], hole.normal[2]), vector(hole.xAxis[0], hole.xAxis[1], hole.xAxis[2]));
-    const pts = hole.points;
-    const count = size(pts);
-    const r = hole.radius;
     const sk = newSketchOnPlane(context, faceId + "hole", { "sketchPlane" : sketchPlane });
-    if (r < 0.0005)
-    {
-        for (var k = 0; k < count; k += 1)
-            skLineSegment(sk, "line" ~ k, { "start" : vector(pts[k][0], pts[k][1]) * meter, "end" : vector(pts[(k + 1) % count][0], pts[(k + 1) % count][1]) * meter });
-    }
-    else
-    {
-        // Each corner: an arc from the incoming edge to the outgoing one.
-        var arcStart = [];
-        var arcEnd = [];
-        for (var k = 0; k < count; k += 1)
-        {
-            const v1 = unit2(pts[(k + count - 1) % count], pts[k]);
-            const v2 = unit2(pts[(k + 1) % count], pts[k]);
-            const reachAlong = r / hole.halfTan[k];
-            const a = [pts[k][0] + v1[0] * reachAlong, pts[k][1] + v1[1] * reachAlong];
-            const b = [pts[k][0] + v2[0] * reachAlong, pts[k][1] + v2[1] * reachAlong];
-            var bis = [v1[0] + v2[0], v1[1] + v2[1]];
-            const bisLength = sqrt(bis[0] * bis[0] + bis[1] * bis[1]);
-            bis = [bis[0] / bisLength, bis[1] / bisLength];
-            // Distance from the corner to the arc's centre, minus the radius, is its nearest point.
-            const sinHalf = hole.halfTan[k] / sqrt(1 + hole.halfTan[k] * hole.halfTan[k]);
-            const toMid = r / sinHalf - r;
-            skArc(sk, "arc" ~ k, {
-                        "start" : vector(a[0], a[1]) * meter,
-                        "mid" : vector(pts[k][0] + bis[0] * toMid, pts[k][1] + bis[1] * toMid) * meter,
-                        "end" : vector(b[0], b[1]) * meter
-                    });
-            arcStart = append(arcStart, a);
-            arcEnd = append(arcEnd, b);
-        }
-        for (var k = 0; k < count; k += 1)
-            skLineSegment(sk, "line" ~ k, { "start" : vector(arcEnd[k][0], arcEnd[k][1]) * meter, "end" : vector(arcStart[(k + 1) % count][0], arcStart[(k + 1) % count][1]) * meter });
-    }
+    drawSegments(sk, "h", holeSegments(hole));
     try
     {
         skSolve(sk);
@@ -1101,6 +1875,83 @@ function cutHole(context is Context, faceId is Id, target is Query, hole is map)
         throw "removing the middle: " ~ toString(deleteError);
     }
     return true;
+}
+
+// Largest distance (meters) of a loop's corners from its best-fit plane.
+function outOfFlat(loop is array) returns number
+{
+    const count = size(loop);
+    var normal = [0, 0, 0];
+    var centre = [0, 0, 0];
+    for (var k = 0; k < count; k += 1)
+    {
+        const a = loop[k];
+        const b = loop[(k + 1) % count];
+        normal = add3(normal, [(a[1] - b[1]) * (a[2] + b[2]), (a[2] - b[2]) * (a[0] + b[0]), (a[0] - b[0]) * (a[1] + b[1])]);
+        centre = add3(centre, scale3(a, 1 / count));
+    }
+    if (length3(normal) < 1e-15)
+        return 0;
+    normal = scale3(normal, 1 / length3(normal));
+    var worst = 0;
+    for (var pt in loop)
+        worst = max(worst, abs(dot3(sub3(pt, centre), normal)));
+    return worst;
+}
+
+// The hole's outline as segments in its own plane (meters): straight lines between
+// rounded corners. Each segment is { kind : "line" | "arc", pts : [start, end] or
+// [start, mid, end, centre] }.
+function holeSegments(hole is map) returns array
+{
+    const pts = hole.points;
+    const count = size(pts);
+    const r = hole.radius;
+    var out = [];
+    if (r < 0.0005)
+    {
+        for (var k = 0; k < count; k += 1)
+            out = append(out, { "kind" : "line", "pts" : [pts[k], pts[(k + 1) % count]] });
+        return out;
+    }
+    // Each corner: an arc from the incoming edge to the outgoing one.
+    var arcStart = [];
+    var arcEnd = [];
+    for (var k = 0; k < count; k += 1)
+    {
+        const v1 = unit2(pts[(k + count - 1) % count], pts[k]);
+        const v2 = unit2(pts[(k + 1) % count], pts[k]);
+        const reachAlong = r / hole.halfTan[k];
+        const a = [pts[k][0] + v1[0] * reachAlong, pts[k][1] + v1[1] * reachAlong];
+        const b = [pts[k][0] + v2[0] * reachAlong, pts[k][1] + v2[1] * reachAlong];
+        var bis = [v1[0] + v2[0], v1[1] + v2[1]];
+        const bisLength = sqrt(bis[0] * bis[0] + bis[1] * bis[1]);
+        bis = [bis[0] / bisLength, bis[1] / bisLength];
+        // The arc's centre sits on the bisector, r / sin(half angle) from the corner.
+        const sinHalf = hole.halfTan[k] / sqrt(1 + hole.halfTan[k] * hole.halfTan[k]);
+        const toCentre = r / sinHalf;
+        const centre = [pts[k][0] + bis[0] * toCentre, pts[k][1] + bis[1] * toCentre];
+        const mid = [pts[k][0] + bis[0] * (toCentre - r), pts[k][1] + bis[1] * (toCentre - r)];
+        out = append(out, { "kind" : "arc", "pts" : [a, mid, b, centre] });
+        arcStart = append(arcStart, a);
+        arcEnd = append(arcEnd, b);
+    }
+    for (var k = 0; k < count; k += 1)
+        out = append(out, { "kind" : "line", "pts" : [arcEnd[k], arcStart[(k + 1) % count]] });
+    return out;
+}
+
+// Adds segments (2D points in meters) to a sketch.
+function drawSegments(sk is Sketch, prefix is string, segs is array)
+{
+    for (var k = 0; k < size(segs); k += 1)
+    {
+        const p = segs[k].pts;
+        if (segs[k].kind == "line")
+            skLineSegment(sk, prefix ~ k, { "start" : vector(p[0][0], p[0][1]) * meter, "end" : vector(p[1][0], p[1][1]) * meter });
+        else
+            skArc(sk, prefix ~ k, { "start" : vector(p[0][0], p[0][1]) * meter, "mid" : vector(p[1][0], p[1][1]) * meter, "end" : vector(p[2][0], p[2][1]) * meter });
+    }
 }
 
 // Unit vector in 2D from `from` toward `to`.
