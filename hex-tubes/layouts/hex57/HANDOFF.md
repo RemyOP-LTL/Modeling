@@ -81,18 +81,19 @@ A Python script lays a pattern of hexagons, pentagons and heptagons on a test tu
 
 ## Picking this up on a Mac (Cursor)
 
-The work is on the branch `claude/project-thread-xbieyl` of `RemyOP-LTL/Modeling`. In a Terminal:
+This work is merged into `main` of `RemyOP-LTL/Modeling`. In a Terminal:
 
 ```
 cd ~/Documents/Modeling
-git fetch origin
-git checkout claude/project-thread-xbieyl
+git checkout main
 git pull
 pip3 install numpy scipy matplotlib
 cd hex-tubes/layouts/hex57
 python3 hex57_layout.py
 open viewer.html
 ```
+
+(If `git checkout main` complains about unsaved changes, run `git status` and ask for help before going on.)
 
 Then open the `~/Documents/Modeling` folder in Cursor and tell its assistant: "Read hex-tubes/layouts/hex57/HANDOFF.md first."
 
