@@ -54,45 +54,64 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # ============================================================================
 SEED = 7                    # change for a different random layout
 
-# Shape size, measured "across" = diameter of a circle with the same area.
-# (For a regular hexagon that is 5 % more than its flat-to-flat width.)
-SIZE_MIN = 3.3
-SIZE_MAX = 4.4
-SIZE_MEAN = 3.8             # target average across all shapes
+# Every shape is aimed at a regular polygon with sides of the same length, like a geodesic:
+# EDGE for hexagons and heptagons, EDGE * PENT_SIDE_RATIO for pentagons. Equal sides mean every
+# corner of a shape is the same distance from its centre, and neighbours agree on shared edges.
+# (A bit over 1 on the ratio lets pentagons cover more of the skin, at the cost of a little
+# roundness in the shapes next to them.)
+EDGE = 2.6
+PENT_SIDE_RATIO = 1.3
+
+
+def regular_across(k):
+    """'Across' (diameter of a circle with the same area) of a regular k-gon with side 1."""
+    return 2 * math.sqrt(k / (4 * math.tan(math.pi / k)) / math.pi)
+
+
+def side_for(k):
+    return EDGE * (PENT_SIDE_RATIO if k == 5 else 1.0)
+
+
+def apothem_for(k):
+    return side_for(k) / (2 * math.tan(math.pi / k))
+
+
+# "Across" of the size map: nearly uniform, so only the 5/7 pairs make the pattern irregular.
+SIZE_MIN = 0.97 * EDGE * regular_across(6)
+SIZE_MAX = 1.03 * EDGE * regular_across(6)
+SIZE_MEAN = EDGE * regular_across(6)
 SIZE_PATCH = 12.0            # size of the patches of similar-sized shapes; bigger = smoother grading
 SIZE_FOLLOWS_RADIUS = 0.7   # 0 = ignore how thin the tube is; 1 = shrink shapes in proportion
 REFERENCE_RADIUS = 6.0      # tube radius at which shapes get their full size
 
 # Pentagons
-PENTAGON_COVERAGE = 0.35    # share of the whole skin's area covered by pentagons (0.35 = 35 %)
-COVERAGE_STEPS = [0.15, 0.20, 0.25, 0.30, 0.35, 0.40]   # layouts for the viewer's slider
-# Every pentagon is aimed at the same regular pentagon, PENT_ACROSS wide (measured like the other
-# shapes: the diameter of a circle with the same area). Keep it close to the other shapes' size.
+PENTAGON_COVERAGE = 0.25    # share of the whole skin's area covered by pentagons (0.35 = 35 %)
+COVERAGE_STEPS = [0.10, 0.15, 0.20, 0.25, 0.30]   # layouts for the viewer's slider
+# Every pentagon is aimed at the same regular pentagon.
 # Big shapes on a 12 in tube can't be flat: 6.45 in across (what a 5 in hole with 0.5 in of rim
 # needs) bows about 0.5 in; 4.8 in across bows about 0.25 in.
-PENT_ACROSS = 4.8
 HOLE_RIM = 0.5              # plastic left between the hole and the pentagon's edge, at the closest point
-PENT_APOTHEM = PENT_ACROSS / (2 * math.sqrt(5 * math.tan(math.pi / 5) / math.pi))   # centre to edge
-PENT_SIDE = 2 * PENT_APOTHEM * math.tan(math.pi / 5)
+PENT_SIDE = side_for(5)
+PENT_APOTHEM = apothem_for(5)                       # centre to edge
+PENT_ACROSS = PENT_SIDE * regular_across(5)
 PENT_AREA = 5 * PENT_APOTHEM ** 2 * math.tan(math.pi / 5)
 HOLE_DIAMETER = round(2 * (PENT_APOTHEM - HOLE_RIM), 2)   # biggest round hole that leaves HOLE_RIM
-PENT_AIM = 1.03             # the neighbours pull pentagons back about 3 %, so the solver aims a bit high
-PENT_PULL = 0.97            # like SIZE_PULL, but for pentagons: nearly all the way to PENT_ACROSS
-PENT_WEIGHT = 12.0
-SHAPE_WEIGHT = 0.5          # pull of other shapes towards regular polygons
-SPRING_WEIGHT = 6.0         # pull of each edge towards its target length
-PENT_SPRING_WEIGHT = 12.0   # same, for a pentagon's edges
-NEIGHBOUR_MIN_ACROSS = 3.5  # shapes touching a pentagon are at least this big across          # a pentagon's pull on a shared corner counts this much more than other shapes'
+PENT_AIM = 1.05            # the neighbours pull pentagons back about 3 %, so the solver aims a bit high
+PENT_PULL = 0.95            # like SIZE_PULL, but for pentagons: nearly all the way to PENT_ACROSS
+PENT_WEIGHT = 30.0
+SHAPE_WEIGHT = 8.0         # pull of other shapes towards regular polygons
+SPRING_WEIGHT = 1.0        # pull of each edge towards its target length
+PENT_SPRING_WEIGHT = 1.0  # same, for a pentagon's edges
 PAIRS_PER_ROUND = 1         # pentagon/heptagon pairs added between settling rounds
 REMESH_ROUNDS = 14          # rounds of split / merge / swap / settle
 CORNER_RELAX_ROUNDS = 80    # rounds nudging each shape towards a regular polygon
 CORNER_RELAX_STRENGTH = 0.5
-SIZE_PULL = 0.5             # 0..1: how strongly each shape is pulled to the size map's size (heptagons
+SIZE_PULL = 0.95            # 0..1: how strongly each shape is pulled to the size map's size (heptagons
                             # otherwise come out large and pentagons small)
-FLATTEN_ROUNDS = 30         # rounds letting corners lift off the surface so panels get flatter (0 = off)
-PLANE_WEIGHT = 0.0          # pull of each shape's best-fit plane on its corners while the corners are solved
+FLATTEN_ROUNDS = 0          # rounds letting corners lift off the surface so panels get flatter (0 = off)
+PLANE_WEIGHT = 3.0          # pull of each shape's best-fit plane on its corners while the corners are solved
 FLATTEN_STEP = 0.7          # how far each round moves a corner towards the average of its shapes' planes
-FLATTEN_MAX_OFFSET = 0.3    # how far a corner may leave the surface while flattening
+FLATTEN_MAX_OFFSET = 0.4    # how far a corner may leave the surface while flattening
 
 # Test tube: a cylinder whose centreline is bent along a circular arc
 TUBE_LENGTH = 96.0          # 8 ft, measured along the centreline
@@ -583,20 +602,15 @@ def settle(mesh, size, rounds, step=0.3):
     T = np.array([t for t in mesh.T if t is not None])
     rim = np.array(mesh.rim)
     deg = np.maximum(np.bincount(E.ravel(), minlength=len(mesh.V)), 1)[:, None]
-    # Each seed asks for half a link; a pentagon's half is fixed, so all pentagons come out the same size.
-    # Shapes next to a pentagon can't be tiny (they share an edge of about PENT_SIDE), so they
-    # ask for at least NEIGHBOUR_MIN_ACROSS.
-    pent = np.array([mesh.is_pentagon(v) for v in range(len(mesh.V))])
-    next_to_pent = np.zeros(len(mesh.V), bool)
-    next_to_pent[np.unique(np.concatenate([E[pent[E[:, 0]], 1], E[pent[E[:, 1]], 0]]))] = True
+    # Each seed asks for half a link: the distance from its centre to the middle of a side of the
+    # regular polygon it would make (5, 6 or 7 sides, by its number of neighbours).
+    half = np.array([apothem_for(min(7, max(5, mesh.valence(v)))) if mesh.rim[v] < 0 else apothem_for(6)
+                     for v in range(len(mesh.V))])
     for _ in range(rounds):
         V = np.array(mesh.V)
         N = np.array(mesh.Nv)
         d = V[E[:, 1]] - V[E[:, 0]]
         L = np.linalg.norm(d, axis=1)
-        half = size.spacing(V) / 2
-        half[next_to_pent] = np.maximum(half[next_to_pent], NEIGHBOUR_MIN_ACROSS / HEX_EDGE_TO_ACROSS / 2)
-        half[pent] = PENT_ACROSS / HEX_EDGE_TO_ACROSS / 2
         target = half[E[:, 0]] + half[E[:, 1]]
         f = ((L - target) / L)[:, None] * d
         F = np.zeros_like(V)
@@ -882,8 +896,10 @@ def regularise_corners(C, fixed, polys, is_end, surf, size, rounds, alpha):
             steps = np.exp(2j * np.pi * np.arange(k) / k)
             rot = (z / steps).sum()
             rot /= abs(rot)
-            want = PENT_ACROSS * PENT_AIM if k == 5 else size.across(o)[0]
-            side[fi] = PENT_SIDE * PENT_AIM if k == 5 else want * math.sqrt(math.pi * math.tan(math.pi / k) / k)
+            kk = min(7, max(5, k))
+            aim = PENT_AIM if k == 5 else 1.0
+            side[fi] = side_for(kk) * aim
+            want = side[fi] * regular_across(k)
             r_want = want * math.sqrt(math.pi / (2 * k * math.sin(2 * math.pi / k)))
             pull = PENT_PULL if k == 5 else SIZE_PULL
             r = (1 - pull) * np.abs(z).mean() + pull * r_want
@@ -966,7 +982,9 @@ def measure(C, polys, is_end, surf):
         el = np.linalg.norm(e, axis=1)
         out_dir = np.cross(n, e) / np.maximum(el, 1e-9)[:, None]
         apothem = np.abs(((P - ctr) * out_dir).sum(1))
+        rad = np.linalg.norm(P - ctr, axis=1)
         info.append(dict(sides=len(poly), end=bool(end), area=area,
+                         spread=float((rad.max() - rad.min()) / rad.mean()),
                          edge_ratio=float(el.max() / max(el.min(), 1e-9)),
                          rim=float(apothem.min() - HOLE_DIAMETER / 2),
                          rim_flat=float(el.mean() / (2 * math.tan(math.pi / len(poly))) - HOLE_DIAMETER / 2),
@@ -1004,6 +1022,9 @@ def measure(C, polys, is_end, surf):
                      pent_rim_flat_min=float(pl.min()), pent_rim_flat_mean=float(pl.mean()),
                      pent_flatness_max=float(pf.max()), pent_flatness_mean=float(pf.mean()))
     orat = np.array([d["edge_ratio"] for d in others])
+    sp = np.array([d["spread"] for d in inner])
+    pstat.update(spread_mean=float(sp.mean()), spread_max=float(sp.max()),
+                 spread_p90=float(np.percentile(sp, 90)))
     pstat.update(other_edge_ratio_mean=float(orat.mean()), other_edge_ratio_max=float(orat.max()))
     m = dict(**pstat, sides={int(k): v for k, v in sorted(counts.items())},
              interior_shapes=len(inner), end_shapes=len(info) - len(inner),
@@ -1237,6 +1258,7 @@ def main():
 
     os.makedirs(os.path.join(HERE, "coverage"), exist_ok=True)
     main_result = None
+    written = set()
     for t in targets:
         m_seed = snaps[t][0]
         settle(m_seed, size, 40, step=0.2)
@@ -1247,10 +1269,11 @@ def main():
               f"pent across {m['pent_across_min']:.2f}-{m['pent_across_max']:.2f}, "
               f"pent edge ratio mean {m['pent_edge_ratio_mean']:.2f} max {m['pent_edge_ratio_max']:.2f}, "
               f"rim (flat) min {m['pent_rim_flat_min']:.2f} mean {m['pent_rim_flat_mean']:.2f}, other edge ratio mean {m['other_edge_ratio_mean']:.2f} max {m['other_edge_ratio_max']:.2f}, "
-              f"shortest edge {m['min_edge']:.2f}")
+              f"shortest edge {m['min_edge']:.2f}, corner-distance spread mean {m['spread_mean']:.2f} p90 {m['spread_p90']:.2f} max {m['spread_max']:.2f}")
         if t == PENTAGON_COVERAGE:
             main_result = (C, fixed, polys, info, m)
-        if t in COVERAGE_STEPS and abs(m["pentagon_coverage"] - t) < 0.025:
+        if t in COVERAGE_STEPS and m["sides"].get(5, 0) not in written:
+            written.add(m["sides"].get(5, 0))
             with open(os.path.join(HERE, "coverage", f"layout_{round(100 * t)}.json"), "w") as f:
                 json.dump(to_layout(C, fixed, polys, info, m, None, t), f, separators=(",", ":"))
 
