@@ -30,6 +30,7 @@ How it works, in short (README.md has the long version):
      so each shape is close to a regular polygon.
   7. Measure, export, draw.
 """
+import copy
 import json
 import math
 import os
@@ -60,9 +61,16 @@ SIZE_MAX = 7.0
 SIZE_MEAN = 5.0             # target average across all shapes
 SIZE_PATCH = 12.0            # size of the patches of similar-sized shapes; bigger = smoother grading
 SIZE_FOLLOWS_RADIUS = 0.7   # 0 = ignore how thin the tube is; 1 = shrink shapes in proportion
-REFERENCE_RADIUS = 6.25     # tube radius at which shapes get their full size
+REFERENCE_RADIUS = 6.0      # tube radius at which shapes get their full size
 
-EXTRA_PAIRS = 4             # pentagon/heptagon pairs added on purpose, on top of the ones size grading makes
+# Pentagons
+PENTAGON_COVERAGE = 0.35    # share of the whole skin's area covered by pentagons (0.35 = 35 %)
+COVERAGE_STEPS = [0.15, 0.20, 0.25, 0.30, 0.35, 0.40]   # layouts for the viewer's slider
+PENT_SCALE = 1.4            # pentagons are made this much bigger "across" than the size map says,
+                            # so they read as the main panels and fewer are needed
+PENT_SCALE_MAX = 2.0        # when there is no room for more pentagons, they grow up to this instead
+PENT_PULL = 0.85            # like SIZE_PULL, but for pentagons
+PAIRS_PER_ROUND = 1         # pentagon/heptagon pairs added between settling rounds
 REMESH_ROUNDS = 14          # rounds of split / merge / swap / settle
 CORNER_RELAX_ROUNDS = 40    # rounds nudging each shape towards a regular polygon
 CORNER_RELAX_STRENGTH = 0.5
@@ -71,13 +79,10 @@ SIZE_PULL = 0.5             # 0..1: how strongly each shape is pulled to the siz
 FLATTEN_ROUNDS = 20         # rounds letting corners lift off the surface so panels get flatter (0 = off)
 FLATTEN_MAX_OFFSET = 0.15   # how far a corner may leave the surface while flattening
 
-# Test tube
-TUBE_LENGTH = 72.0
-TUBE_RADIUS = 6.25          # 12.5 in across in the middle
-BASE_TAPER = 0.75           # radius at the base end, as a fraction of TUBE_RADIUS
-TIP_TAPER = 0.5             # radius at the tip end
-TAPER_LENGTH = 0.18         # fraction of the length over which each end tapers
-BEND = 6.0                  # how far the centreline bows sideways
+# Test tube: a cylinder whose centreline is bent along a circular arc
+TUBE_LENGTH = 96.0          # 8 ft, measured along the centreline
+TUBE_RADIUS = 6.0           # 12 in across
+BEND_RADIUS = 240.0         # 20 ft radius bend of the centreline (0 = straight)
 
 # Colours by number of sides
 COLOURS = {5: "#eb6834", 6: "#e4ddd0", 7: "#2a78d6", "end": "#a9d9c5", "other": "#e87ba4"}
@@ -88,13 +93,8 @@ HEX_EDGE_TO_ACROSS = 2 * math.sqrt(math.sqrt(3) / (2 * math.pi))   # 1.050: seed
 # ============================================================================
 # 1. Test surface
 # ============================================================================
-def smoothstep(x):
-    x = np.clip(x, 0.0, 1.0)
-    return x * x * (3 - 2 * x)
-
-
 class TestTube:
-    """A bent, tapered tube. u in [0,1) goes around, t in [0,1] goes along.
+    """A cylinder bent along a circular arc. u in [0,1) goes around, t in [0,1] goes along.
 
     TUBE-SPECIFIC: this class is the only place that knows about "around x along".
     The layout itself only uses dense_sample() and rim(); the unrolled preview and
@@ -104,12 +104,12 @@ class TestTube:
     def __init__(self):
         n = 2001
         t = np.linspace(0, 1, n)
-        z = TUBE_LENGTH * t
-        for _ in range(3):   # stretch z so the centreline is TUBE_LENGTH long
-            c = np.stack([BEND * np.sin(np.pi * t) + 0.25 * BEND * np.sin(3 * np.pi * t),
-                          0.5 * BEND * np.sin(2 * np.pi * t + 0.3), z], 1)
-            length = np.linalg.norm(np.diff(c, axis=0), axis=1).sum()
-            z = z * TUBE_LENGTH / length
+        s = TUBE_LENGTH * t
+        if BEND_RADIUS > 0:
+            a = s / BEND_RADIUS
+            c = np.stack([BEND_RADIUS * (1 - np.cos(a)), np.zeros(n), BEND_RADIUS * np.sin(a)], 1)
+        else:
+            c = np.stack([np.zeros(n), np.zeros(n), s], 1)
         tang = np.gradient(c, axis=0)
         tang /= np.linalg.norm(tang, axis=1)[:, None]
         # Frame carried along the curve without twisting (parallel transport).
@@ -123,9 +123,7 @@ class TestTube:
         self.s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(c, axis=0), axis=1))])
 
     def radius(self, t):
-        f = 1 - (1 - BASE_TAPER) * smoothstep((TAPER_LENGTH - t) / TAPER_LENGTH) \
-              - (1 - TIP_TAPER) * smoothstep((t - 1 + TAPER_LENGTH) / TAPER_LENGTH)
-        return TUBE_RADIUS * f * (1 + 0.04 * np.sin(2 * np.pi * 1.3 * t + 1))
+        return np.full(np.shape(t), TUBE_RADIUS, dtype=float)
 
     def _interp(self, arr, t):
         return np.stack([np.interp(t, self.t, arr[:, k]) for k in range(3)], -1)
@@ -271,6 +269,7 @@ class SeedMesh:
         self.rim = list(rim)
         self.surf = surf
         self.Nv = list(surf.normal(np.array(self.V)))
+        self.pent_scale = PENT_SCALE     # how much bigger pentagons are than the size map says
         self.rebuild()
 
     def rebuild(self):
@@ -392,6 +391,18 @@ class SeedMesh:
         p, q, c, d, tris = info
         self.T[tris[0]] = [c, p, d]
         self.T[tris[1]] = [d, q, c]
+
+    def clone(self):
+        m = copy.copy(self)
+        m.V = [v.copy() for v in self.V]
+        m.Nv = [n.copy() for n in self.Nv]
+        m.T = [None if t is None else list(t) for t in self.T]
+        m.rim = list(self.rim)
+        m.rebuild()
+        return m
+
+    def is_pentagon(self, v):
+        return self.rim[v] < 0 and self.valence(v) == 5
 
     def compact(self):
         used = sorted({x for t in self.T if t is not None for x in t})
@@ -542,12 +553,16 @@ def settle(mesh, size, rounds, step=0.3):
     T = np.array([t for t in mesh.T if t is not None])
     rim = np.array(mesh.rim)
     deg = np.maximum(np.bincount(E.ravel(), minlength=len(mesh.V)), 1)[:, None]
+    # A link from a pentagon's seed is longer, so the pentagon grows by pent_scale
+    # (only the pentagon's half of the link stretches).
+    pent = np.array([mesh.is_pentagon(v) for v in range(len(mesh.V))])
+    stretch = 1 + 0.5 * (mesh.pent_scale - 1) * (pent[E[:, 0]].astype(float) + pent[E[:, 1]])
     for _ in range(rounds):
         V = np.array(mesh.V)
         N = np.array(mesh.Nv)
         d = V[E[:, 1]] - V[E[:, 0]]
         L = np.linalg.norm(d, axis=1)
-        target = size.spacing((V[E[:, 0]] + V[E[:, 1]]) / 2)
+        target = size.spacing((V[E[:, 0]] + V[E[:, 1]]) / 2) * stretch
         f = ((L - target) / L)[:, None] * d
         F = np.zeros_like(V)
         np.add.at(F, E[:, 0], f)
@@ -577,34 +592,148 @@ def settle(mesh, size, rounds, step=0.3):
         mesh.Nv = list(Nnew)
 
 
-def scatter_pairs(mesh, count, rng):
-    """Rotate random links a quarter turn: two hexagons -> pentagons, two -> heptagons.
-    Only where the whole neighbourhood (two rings) is plain hexagons, so pairs never touch."""
-    made = 0
+def pattern_faults(mesh):
+    """Interior shapes with fewer than 5 or more than 7 sides, plus pentagons touching."""
+    odd = [v for v in range(len(mesh.V)) if mesh.rim[v] < 0 and not 5 <= mesh.valence(v) <= 7]
+    touch = sum(1 for a, b in mesh.edge_tris if mesh.is_pentagon(a) and mesh.is_pentagon(b))
+    return odd, touch
+
+
+def fix_odd_shapes(mesh, size):
+    """Remove any leftover 4- or 8-sided shape by trying every link rotation and merge
+    around it, keeping whichever leaves no odd shapes and the fewest touching pentagons."""
+    for _ in range(10):
+        odd, touch = pattern_faults(mesh)
+        if not odd:
+            return mesh
+        v = odd[0]
+        best, best_score = None, (len(odd), touch)
+        ring = mesh.nbrs[v] | {v}
+        for e in [e for e in mesh.edge_tris if e[0] in ring and e[1] in ring]:
+            for op in ("flip", "merge"):
+                trial = mesh.clone()
+                if op == "flip":
+                    info = trial.flip_info(e)
+                    if info is None or not (trial.tri_ok(info[2], info[0], info[3], min_angle=5)
+                                            and trial.tri_ok(info[3], info[1], info[2], min_angle=5)):
+                        continue
+                    trial.flip(info)
+                elif v in e:
+                    if not trial.try_collapse(e, size):
+                        continue
+                    trial.compact()
+                else:
+                    continue
+                trial.rebuild()
+                o, t = pattern_faults(trial)
+                if (len(o), t) < best_score:
+                    best, best_score = trial, (len(o), t)
+        if best is None:
+            print(f"  could not remove a {mesh.valence(v)}-sided shape")
+            return mesh
+        mesh = best
+        settle(mesh, size, 10)
+    return mesh
+
+
+def add_pair(mesh, rng, min_angle):
+    """Rotate one link a quarter turn to make more pentagons. The two seeds at the ends of
+    the link (p, q) lose a neighbour and the two beside it (c, d) gain one, so:
+      - a hexagon at p or q becomes a pentagon, a heptagon there becomes a hexagon;
+      - a hexagon at c or d becomes a heptagon, a pentagon there becomes a hexagon.
+    On plain honeycomb this makes a pentagon/heptagon pair. Next to existing pairs it
+    lets pentagons pack closer, sharing heptagons. A rotation is only allowed if every
+    shape keeps 5 to 7 sides, the pentagon count goes up, and no two pentagons touch.
+    Picks the best of a few random candidates, preferring spots far from other pentagons,
+    so pentagons spread out but not in a neat grid."""
     edges = list(mesh.edge_tris.keys())
     rng.shuffle(edges)
-    for clearance in (2, 1, 0):
-        for e in edges:
-            if made >= count:
-                return made
-            info = mesh.flip_info(e)
-            if info is None:
-                continue
-            p, q, c, d, _ = info
-            ring = {p, q, c, d}
-            for _ in range(clearance):
-                ring = ring | set().union(*(mesh.nbrs[v] for v in ring))
-            if any(mesh.rim[v] >= 0 or mesh.valence(v) != 6 for v in ring):
-                continue
-            # Never let the new pentagons (p, q) touch an existing pentagon.
-            if any(mesh.rim[w] < 0 and mesh.valence(w) == 5 for w in mesh.nbrs[p] | mesh.nbrs[q]):
-                continue
-            if not (mesh.tri_ok(c, p, d, min_angle=20) and mesh.tri_ok(d, q, c, min_angle=20)):
-                continue
-            mesh.flip(info)
-            mesh.rebuild()
-            made += 1
-    return made
+    pent_pos = {v: mesh.V[v] for v in range(len(mesh.V)) if mesh.is_pentagon(v)}
+    best, best_d, tried = None, -1.0, 0
+    for e in edges:
+        info = mesh.flip_info(e)
+        if info is None:
+            continue
+        p, q, c, d, _ = info
+        if any(mesh.rim[v] >= 0 for v in (p, q, c, d)):
+            continue
+        val = {v: mesh.valence(v) for v in (p, q, c, d)}
+        if any(val[v] not in (6, 7) for v in (p, q)) or any(val[v] not in (5, 6) for v in (c, d)):
+            continue
+        new5 = [v for v in (p, q) if val[v] == 6]
+        lost5 = [v for v in (c, d) if val[v] == 5]
+        if len(new5) <= len(lost5):
+            continue
+        # After the rotation p and q are no longer neighbours; c and d are.
+        after5 = (set(pent_pos) - set(lost5)) | set(new5)
+        nb = {v: set(mesh.nbrs[v]) for v in (p, q, c, d)}
+        nb[p].discard(q); nb[q].discard(p); nb[c].add(d); nb[d].add(c)
+        if any(w in after5 for v in new5 for w in nb[v]):
+            continue
+        if not (mesh.tri_ok(c, p, d, min_angle=min_angle) and mesh.tri_ok(d, q, c, min_angle=min_angle)):
+            continue
+        others = [pos for v, pos in pent_pos.items() if v not in lost5]
+        if others:
+            O = np.array(others)
+            dist = min(np.linalg.norm(O - mesh.V[v], axis=1).min() for v in new5)
+        else:
+            dist = 1e9
+        if dist > best_d:
+            best, best_d = info, dist
+        tried += 1
+        if tried >= PICK_FROM:
+            break
+    if best is None:
+        return False
+    mesh.flip(best)
+    mesh.rebuild()
+    return True
+
+
+PICK_FROM = 6   # candidates compared for each new pair; more = more even spacing, fewer = more random
+
+
+def pentagon_coverage(mesh, size):
+    """Share of the skin's area that is pentagons, after a quick version of step 6."""
+    C, fixed, polys, is_end = build_cells(mesh)
+    C = regularise_corners(C, fixed, polys, is_end, mesh.surf, size, 8, CORNER_RELAX_STRENGTH, mesh.pent_scale)
+    areas = np.array([np.linalg.norm(newell(C[p])) / 2 for p in polys])
+    pent = np.array([len(p) == 5 and not e for p, e in zip(polys, is_end)])
+    return areas[pent].sum() / areas.sum()
+
+
+def add_pentagons(mesh, size, targets, rng):
+    """Add pentagon/heptagon pairs until each coverage in targets is reached.
+    Returns {target: (copy of the seed mesh, estimated coverage)}, taking whichever
+    state (just before or just after crossing the target) is closer to it."""
+    targets = sorted(targets)
+    out = {}
+    growing = False
+    prev = (mesh.clone(), pentagon_coverage(mesh, size))
+    while targets:
+        cov = pentagon_coverage(mesh, size)
+        while targets and cov >= targets[0]:
+            t = targets.pop(0)
+            out[t] = prev if abs(prev[1] - t) < abs(cov - t) else (mesh.clone(), cov)
+        if not targets:
+            break
+        prev = (mesh.clone(), cov)
+        made = 0
+        if not growing:
+            for _ in range(PAIRS_PER_ROUND):
+                made += add_pair(mesh, rng, 20) or add_pair(mesh, rng, 8)
+            if not made:
+                print(f"  no room for more pentagons at {100 * cov:.0f} % coverage; making them bigger instead")
+                growing = True
+        if growing:
+            if mesh.pent_scale >= PENT_SCALE_MAX - 1e-9:
+                print(f"  pentagons at their largest; coverage stops at {100 * cov:.0f} %")
+                for t in targets:
+                    out[t] = (mesh.clone(), cov)
+                break
+            mesh.pent_scale = min(PENT_SCALE_MAX, mesh.pent_scale + 0.05)
+        settle(mesh, size, 12, step=0.2)
+    return out
 
 
 # ============================================================================
@@ -675,7 +804,7 @@ def plane_fit(P):
     return o, n
 
 
-def regularise_corners(C, fixed, polys, is_end, surf, size, rounds, alpha):
+def regularise_corners(C, fixed, polys, is_end, surf, size, rounds, alpha, pent_scale):
     """Pull each shape towards a regular polygon (of a size between its own and the
     size map's), sharing the pull at every corner between the shapes that meet there."""
     for _ in range(rounds):
@@ -697,9 +826,10 @@ def regularise_corners(C, fixed, polys, is_end, surf, size, rounds, alpha):
             steps = np.exp(2j * np.pi * np.arange(k) / k)
             rot = (z / steps).sum()
             rot /= abs(rot)
-            want = size.across(o)[0]
+            want = size.across(o)[0] * (pent_scale if k == 5 else 1.0)
             r_want = want * math.sqrt(math.pi / (2 * k * math.sin(2 * math.pi / k)))
-            r = (1 - SIZE_PULL) * np.abs(z).mean() + SIZE_PULL * r_want
+            pull = PENT_PULL if k == 5 else SIZE_PULL
+            r = (1 - pull) * np.abs(z).mean() + pull * r_want
             w = r * rot * steps
             target = o + np.outer(w.real, e1) + np.outer(w.imag, e2)
             np.add.at(acc, poly, target)
@@ -862,7 +992,8 @@ def render(C, polys, info, metrics, tube, surf, sample_uv, out):
         draw_3d(ax, Cv, polys, info_v, elev, azim, lo, hi, zoom=1.9)
         ax.set_title(title, fontsize=12, color="#444", y=0.92)
     fig.legend(handles=legend_handles(metrics), loc="lower center", ncol=5, frameon=False, fontsize=11)
-    fig.suptitle("Layout B: hexagons with pentagon/heptagon pairs on the 12.5 in x 6 ft test tube",
+    fig.suptitle(f"Layout B: hexagons with pentagon/heptagon pairs on the {2 * TUBE_RADIUS:g} in x "
+                 f"{TUBE_LENGTH / 12:g} ft test tube, {100 * metrics['pentagon_coverage']:.0f} % pentagons",
                  fontsize=14)
     fig.savefig(os.path.join(out, "preview_3d.png"), dpi=110)
     plt.close(fig)
@@ -917,6 +1048,54 @@ def render(C, polys, info, metrics, tube, surf, sample_uv, out):
 # ============================================================================
 # Main
 # ============================================================================
+def finish(mesh, surf, size):
+    """Step 6 and 7 for one seed mesh: corners, relaxing, flattening, measuring."""
+    C, fixed, polys, is_end = build_cells(mesh)
+    C = regularise_corners(C, fixed, polys, is_end, surf, size, CORNER_RELAX_ROUNDS, CORNER_RELAX_STRENGTH,
+                           mesh.pent_scale)
+    _, m_surface = measure(C, polys, is_end, surf)
+    C = flatten_corners(C, fixed, polys, surf, FLATTEN_ROUNDS, FLATTEN_MAX_OFFSET)
+    info, m = measure(C, polys, is_end, surf)
+    m["flatness_on_surface_max"] = m_surface["flatness_max"]
+    m["flatness_on_surface_mean"] = m_surface["flatness_mean"]
+    return C, fixed, polys, info, m
+
+
+def to_layout(C, fixed, polys, info, m, unrolled, coverage_target):
+    corner_cells = defaultdict(list)
+    for fi, poly in enumerate(polys):
+        for c in poly:
+            corner_cells[c].append(fi)
+    return dict(
+        units="inch",
+        description="Layout B (hex57): hexagons with scattered pentagon/heptagon pairs on a test tube. "
+                    "Polygons list corner indices anticlockwise as seen from outside the tube. "
+                    "Every corner is shared exactly by the shapes that meet there.",
+        params=dict(SEED=SEED, SIZE_MIN=SIZE_MIN, SIZE_MAX=SIZE_MAX, SIZE_MEAN=SIZE_MEAN,
+                    SIZE_PATCH=SIZE_PATCH, SIZE_FOLLOWS_RADIUS=SIZE_FOLLOWS_RADIUS,
+                    PENTAGON_COVERAGE=coverage_target, PENT_SCALE=PENT_SCALE,
+                    FLATTEN_ROUNDS=FLATTEN_ROUNDS, FLATTEN_MAX_OFFSET=FLATTEN_MAX_OFFSET,
+                    TUBE_LENGTH=TUBE_LENGTH, TUBE_RADIUS=TUBE_RADIUS, BEND_RADIUS=BEND_RADIUS),
+        vertices=np.round(C, 4).tolist(),
+        vertex_on_rim=[bool(f) for f in fixed],
+        vertex_unrolled=None if unrolled is None else np.round(unrolled, 4).tolist(),
+        vertex_shapes=[corner_cells[c] for c in range(len(C))],
+        polygons=[[int(x) for x in p] for p in polys],
+        polygon_info=[dict(sides=d["sides"], end=d["end"], area=round(d["area"], 3),
+                           across=round(d["across"], 3), flatness=round(d["flatness"], 4),
+                           centre=np.round(d["centre"], 4).tolist(),
+                           normal=np.round(d["normal"], 4).tolist()) for d in info],
+        metrics=m,
+    )
+
+
+def add_coverage(info, m):
+    area = np.array([d["area"] for d in info])
+    pent = np.array([d["sides"] == 5 and not d["end"] for d in info])
+    m["pentagon_coverage"] = float(area[pent].sum() / area.sum())
+    m["total_area"] = float(area.sum())
+
+
 def main():
     rng = np.random.default_rng(SEED)
     tube = TestTube()
@@ -936,51 +1115,41 @@ def main():
     for _ in range(6):     # polish: fewer, better-spread pentagon/heptagon pairs
         improve_valence(mesh, passes=20, min_angle=8)
         settle(mesh, size, 15)
-    made = scatter_pairs(mesh, EXTRA_PAIRS, rng)
-    settle(mesh, size, 40, step=0.2)
-    print(f"adapted: {len(mesh.V)} seeds, {made} extra pentagon/heptagon pairs scattered")
+    mesh = fix_odd_shapes(mesh, size)
+    odd, touch = pattern_faults(mesh)
+    print(f"adapted: {len(mesh.V)} seeds, odd shapes: {len(odd)}, pentagons touching: {touch}")
 
-    C, fixed, polys, is_end = build_cells(mesh)
-    C = regularise_corners(C, fixed, polys, is_end, surf, size, CORNER_RELAX_ROUNDS, CORNER_RELAX_STRENGTH)
-    _, m_surface = measure(C, polys, is_end, surf)
-    C = flatten_corners(C, fixed, polys, surf, FLATTEN_ROUNDS, FLATTEN_MAX_OFFSET)
-    info, m = measure(C, polys, is_end, surf)
-    m["flatness_on_surface_max"] = m_surface["flatness_max"]
-    m["flatness_on_surface_mean"] = m_surface["flatness_mean"]
+    targets = sorted(set(COVERAGE_STEPS) | {PENTAGON_COVERAGE})
+    snaps = add_pentagons(mesh, size, targets, rng)
 
+    os.makedirs(os.path.join(HERE, "coverage"), exist_ok=True)
+    main_result = None
+    for t in targets:
+        m_seed = snaps[t][0]
+        settle(m_seed, size, 40, step=0.2)
+        C, fixed, polys, info, m = finish(m_seed, surf, size)
+        add_coverage(info, m)
+        m["pent_scale"] = m_seed.pent_scale
+        print(f"  target {100 * t:3.0f} %: got {100 * m['pentagon_coverage']:4.1f} %, "
+              f"{m['sides'].get(5, 0)} pentagons x{m_seed.pent_scale:.2f}, touching: {m['pentagons_touching']}, "
+              f"shortest edge {m['min_edge']:.2f} in, out of flat max {m['flatness_max']:.2f} in")
+        if t == PENTAGON_COVERAGE:
+            main_result = (C, fixed, polys, info, m)
+        if t in COVERAGE_STEPS:
+            with open(os.path.join(HERE, "coverage", f"layout_{round(100 * t)}.json"), "w") as f:
+                json.dump(to_layout(C, fixed, polys, info, m, None, t), f, separators=(",", ":"))
+
+    C, fixed, polys, info, m = main_result
     u, along, circ = render(C, polys, info, m, tube, surf, uv, HERE)
-
-    corner_cells = defaultdict(list)
-    for fi, poly in enumerate(polys):
-        for c in poly:
-            corner_cells[c].append(fi)
-    layout = dict(
-        units="inch",
-        description="Layout B (hex57): hexagons with scattered pentagon/heptagon pairs on a test tube. "
-                    "Polygons list corner indices anticlockwise as seen from outside the tube. "
-                    "Every corner is shared exactly by the shapes that meet there.",
-        params=dict(SEED=SEED, SIZE_MIN=SIZE_MIN, SIZE_MAX=SIZE_MAX, SIZE_MEAN=SIZE_MEAN,
-                    SIZE_PATCH=SIZE_PATCH, SIZE_FOLLOWS_RADIUS=SIZE_FOLLOWS_RADIUS,
-                    EXTRA_PAIRS=EXTRA_PAIRS, FLATTEN_ROUNDS=FLATTEN_ROUNDS,
-                    FLATTEN_MAX_OFFSET=FLATTEN_MAX_OFFSET, TUBE_LENGTH=TUBE_LENGTH,
-                    TUBE_RADIUS=TUBE_RADIUS),
-        vertices=np.round(C, 4).tolist(),
-        vertex_on_rim=[bool(f) for f in fixed],
-        vertex_unrolled=np.round(np.stack([(u - 0.5) * circ, along], 1), 4).tolist(),
-        vertex_shapes=[corner_cells[c] for c in range(len(C))],
-        polygons=[[int(x) for x in p] for p in polys],
-        polygon_info=[dict(sides=d["sides"], end=d["end"], area=round(d["area"], 3),
-                           across=round(d["across"], 3), flatness=round(d["flatness"], 4),
-                           centre=np.round(d["centre"], 4).tolist(),
-                           normal=np.round(d["normal"], 4).tolist()) for d in info],
-        metrics=m,
-    )
+    layout = to_layout(C, fixed, polys, info, m, np.stack([(u - 0.5) * circ, along], 1), PENTAGON_COVERAGE)
     with open(os.path.join(HERE, "layout.json"), "w") as f:
         json.dump(layout, f, indent=1)
     make_viewer(HERE)
 
     s = m["sides"]
     print()
+    print(f"Main layout ({100 * PENTAGON_COVERAGE:.0f} % target):")
+    print(f"Pentagon coverage:  {100 * m['pentagon_coverage']:.1f} % of {m['total_area']:.0f} sq in")
     print("Shapes (not counting the ones cut by the tube ends):")
     for k in sorted(s):
         name = {4: "4 sides", 5: "pentagons", 6: "hexagons", 7: "heptagons", 8: "8 sides"}.get(k, f"{k} sides")
@@ -992,7 +1161,7 @@ def main():
     print(f"Corners lifted off the surface by up to {m['corner_off_surface_max']:.3f} in")
     print(f"Shortest edge: {m['min_edge']:.2f} in (cut end shapes: {m['min_edge_end_shapes']:.2f} in)   non-convex shapes: {m['non_convex']}"
           f"   pentagons touching: {m['pentagons_touching']}")
-    print(f"Wrote layout.json and preview_*.png to {HERE}")
+    print(f"Wrote layout.json, coverage/*.json, viewer.html and preview_*.png to {HERE}")
 
 
 if __name__ == "__main__":

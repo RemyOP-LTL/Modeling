@@ -140,3 +140,11 @@ That's what the hole step needs later: a shared corner list for the corner holes
 3. **Size map from a drawing.** Instead of random blobs, let Remy paint where big and small shapes go, for example big on the trunk and small near the tips.
 4. **Holes and cutouts.** The data already has what's needed: shared corners, valence per corner, and centres and normals per shape.
 5. **Flat pieces for the CNC.** Group neighbouring shapes into strips that fit 48 × 96 in sheets.
+
+
+## Update: 8 ft bent cylinder and pentagon coverage slider
+
+- The test shape is now a plain 12 in cylinder, 8 ft long, with its centreline bent on a 20 ft radius (`TUBE_LENGTH`, `TUBE_RADIUS`, `BEND_RADIUS` at the top of the script). No taper or bulge.
+- `PENTAGON_COVERAGE` (default 0.35) is the share of the skin's area covered by pentagons. The script adds pentagon/heptagon pairs until it gets there, and never lets two pentagons share an edge. When there is no room for more pentagons it makes them bigger (up to `PENT_SCALE_MAX`) instead.
+- The script also writes layouts at 15, 20, 25, 30, 35 and 40 % into `coverage/`, and `viewer.html` has a slider across them. On this tube about 28 % is the most that fits at the normal pentagon size. 35 % needs pentagons about 1.75 times the size map's size, and 40 % gets squeezed neighbours with edges under 0.2 in, so 40 % is the practical limit.
+- The numbers in the older sections above (tapered 6 ft tube, 147 shapes) describe the first version.

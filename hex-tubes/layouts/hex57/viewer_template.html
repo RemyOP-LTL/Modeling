@@ -44,9 +44,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 #pick { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: max(12px, env(safe-area-inset-left, 0px)); font-size: 13px; min-width: 200px; }
 #help { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); font-size: 12px; color: var(--muted); padding: 8px 12px; }
 #toggle { display: none; }
+.cov-top { display: flex; justify-content: space-between; align-items: baseline; }
+.cov-val { font-family: var(--display); font-weight: 600; font-size: 26px; line-height: 1; color: var(--pent); }
+input[type="range"] { width: 100%; accent-color: var(--pent); margin: 8px 0 2px; }
+.ticks { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.note { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.4; }
+.note.warn { color: var(--accent); }
 @media (max-width: 560px) {
   #help { display: none; }
-  #info.collapsed > :not(header) { display: none; }
+  #info.collapsed > :not(header):not(.cov) { display: none; }
   #toggle { display: inline-block; }
 }
 </style>
@@ -58,6 +64,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     <div><h1>Layout B</h1><p class="sub" id="subtitle"></p></div>
     <button class="btn" id="toggle" aria-expanded="true">Hide</button>
   </header>
+  <div class="cov">
+    <div class="cov-top"><label class="label" for="coverage">Pentagon coverage</label><span class="cov-val" id="cov-val"></span></div>
+    <input type="range" id="coverage" min="0" step="1">
+    <div class="ticks" id="ticks"></div>
+    <p class="note" id="cov-note"></p>
+  </div>
   <div>
     <div class="label">Colour by</div>
     <div class="seg" role="group" aria-label="Colour by">
@@ -88,95 +100,117 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
-const L = /*LAYOUT_JSON*/null;
+const DATA = /*LAYOUT_JSON*/null;   // { layouts: [...one per coverage step], start: index }
 
+const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const NAMES = { 5: "Pentagon", 6: "Hexagon", 7: "Heptagon" };
 const kind = p => p.end ? "end" : ({ 5: "pent", 6: "hex", 7: "hept" }[p.sides] || "hex");
-const m = L.metrics;
-
-document.getElementById("subtitle").textContent =
-  `Hexagons with pentagon/heptagon pairs · seed ${L.params.SEED}`;
-
-// legend with counts
-const counts = { pent: 0, hex: 0, hept: 0, end: 0 };
-L.polygon_info.forEach(p => counts[kind(p)]++);
-const legend = document.getElementById("legend-type");
-[["pent", "Pentagons"], ["hex", "Hexagons"], ["hept", "Heptagons"], ["end", "Cut at tube end"]].forEach(([k, t]) => {
-  legend.insertAdjacentHTML("beforeend",
-    `<span class="sw" style="background:var(--${k})"></span><span>${t}</span><span class="num">${counts[k]}</span>`);
-});
-const stats = [
-  ["Shapes", L.polygons.length],
-  ["Size across", `${m.across_min.toFixed(1)}–${m.across_max.toFixed(1)} in`],
-  ["Average size", `${m.across_mean.toFixed(1)} in`],
-  ["Out of flat, max", `${m.flatness_max.toFixed(2)} in`],
-  ["Shortest edge", `${m.min_edge.toFixed(2)} in`],
-  ["Pentagons touching", m.pentagons_touching],
-];
-document.getElementById("stats").innerHTML =
-  stats.map(([a, b]) => `<span>${a}</span><span class="num">${b}</span>`).join("");
+const pct = x => Math.round(100 * x) + " %";
 
 // ---- scene ----
-const stage = document.getElementById("stage");
+const stage = $("stage");
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 stage.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(35, 1, 0.5, 2000);
+const camera = new THREE.PerspectiveCamera(35, 1, 0.5, 3000);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.75));
 const sun = new THREE.DirectionalLight(0xffffff, 0.65);
 camera.add(sun); sun.position.set(30, 50, 40); scene.add(camera);
 
-// Tube runs along z in the file; turn it upright (z -> y).
-const V = L.vertices.map(([x, y, z]) => new THREE.Vector3(x, z, -y));
-const box = new THREE.Box3().setFromPoints(V);
-const centre = box.getCenter(new THREE.Vector3());
-const height = box.max.y - box.min.y;
-
-// One fan of triangles per panel, from its centre, so bowed panels still render.
-// Each panel is lit with its own average normal, so it reads as one piece of plastic.
-const pos = [], nrm = [], polyOf = [];
-L.polygons.forEach((poly, pi) => {
-  const c = new THREE.Vector3(), n = new THREE.Vector3();
-  poly.forEach(i => c.add(V[i])); c.divideScalar(poly.length);
-  poly.forEach((i, k) => {
-    const a = V[i].clone().sub(c), b = V[poly[(k + 1) % poly.length]].clone().sub(c);
-    n.add(a.cross(b));
-  });
-  n.normalize();
-  for (let k = 0; k < poly.length; k++) {
-    const a = V[poly[k]], b = V[poly[(k + 1) % poly.length]];
-    pos.push(c.x, c.y, c.z, a.x, a.y, a.z, b.x, b.y, b.z);
-    for (let j = 0; j < 3; j++) nrm.push(n.x, n.y, n.z);
-    polyOf.push(pi);
-  }
-});
-const geo = new THREE.BufferGeometry();
-geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
-geo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(pos.length), 3));
-const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+const material = new THREE.MeshStandardMaterial({
   vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0,
-  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
-scene.add(mesh);
-
-// seams: each shared edge once
-const seen = new Set(), seg = [];
-L.polygons.forEach(poly => poly.forEach((a, k) => {
-  const b = poly[(k + 1) % poly.length], key = a < b ? a + "_" + b : b + "_" + a;
-  if (seen.has(key)) return; seen.add(key);
-  seg.push(V[a].x, V[a].y, V[a].z, V[b].x, V[b].y, V[b].z);
-}));
-const segGeo = new THREE.BufferGeometry();
-segGeo.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
-const seams = new THREE.LineSegments(segGeo, new THREE.LineBasicMaterial({ color: css("--seam") }));
-scene.add(seams);
-
-// highlight outline for the picked panel
+  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const seamMat = new THREE.LineBasicMaterial({ color: css("--seam") });
+const hiMat = new THREE.LineBasicMaterial({ color: css("--accent"), depthTest: false });
 const hiGeo = new THREE.BufferGeometry();
-const hi = new THREE.LineLoop(hiGeo, new THREE.LineBasicMaterial({ color: css("--accent"), depthTest: false }));
+const hi = new THREE.LineLoop(hiGeo, hiMat);
 hi.renderOrder = 2; hi.visible = false; scene.add(hi);
+
+let L, m, V, mesh, seams, polyOf, centre, height;
+
+// Tube runs along z in the file; turn it upright (z -> y).
+function build(layout) {
+  L = layout; m = L.metrics;
+  if (mesh) { scene.remove(mesh, seams); mesh.geometry.dispose(); seams.geometry.dispose(); }
+  V = L.vertices.map(([x, y, z]) => new THREE.Vector3(x, z, -y));
+  const box = new THREE.Box3().setFromPoints(V);
+  centre = box.getCenter(new THREE.Vector3());
+  height = box.max.y - box.min.y;
+
+  // One fan of triangles per panel, from its centre, so bowed panels still render.
+  // Each panel is lit with its own average normal, so it reads as one piece of plastic.
+  const pos = [], nrm = [];
+  polyOf = [];
+  L.polygons.forEach((poly, pi) => {
+    const c = new THREE.Vector3(), n = new THREE.Vector3();
+    poly.forEach(i => c.add(V[i])); c.divideScalar(poly.length);
+    poly.forEach((i, k) => {
+      const a = V[i].clone().sub(c), b = V[poly[(k + 1) % poly.length]].clone().sub(c);
+      n.add(a.cross(b));
+    });
+    n.normalize();
+    for (let k = 0; k < poly.length; k++) {
+      const a = V[poly[k]], b = V[poly[(k + 1) % poly.length]];
+      pos.push(c.x, c.y, c.z, a.x, a.y, a.z, b.x, b.y, b.z);
+      for (let j = 0; j < 3; j++) nrm.push(n.x, n.y, n.z);
+      polyOf.push(pi);
+    }
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(pos.length), 3));
+  mesh = new THREE.Mesh(geo, material);
+
+  // seams: each shared edge once
+  const seen = new Set(), seg = [];
+  L.polygons.forEach(poly => poly.forEach((a, k) => {
+    const b = poly[(k + 1) % poly.length], key = a < b ? a + "_" + b : b + "_" + a;
+    if (seen.has(key)) return; seen.add(key);
+    seg.push(V[a].x, V[a].y, V[a].z, V[b].x, V[b].y, V[b].z);
+  }));
+  const segGeo = new THREE.BufferGeometry();
+  segGeo.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+  seams = new THREE.LineSegments(segGeo, seamMat);
+  seams.visible = $("opt-seams").checked;
+  scene.add(mesh, seams);
+  hi.visible = false; $("pick").hidden = true;
+
+  // text
+  const P = L.params;
+  $("subtitle").textContent =
+    `${2 * P.TUBE_RADIUS} in × ${P.TUBE_LENGTH / 12} ft tube, bent on a ${P.BEND_RADIUS / 12} ft radius · seed ${P.SEED}`;
+  const counts = { pent: 0, hex: 0, hept: 0, end: 0, other: 0 };
+  L.polygon_info.forEach(p => counts[kind(p)]++);
+  $("legend-type").innerHTML = [["pent", "Pentagons"], ["hex", "Hexagons"], ["hept", "Heptagons"], ["end", "Cut at tube end"]]
+    .map(([k, t]) => `<span class="sw" style="background:var(--${k})"></span><span>${t}</span><span class="num">${counts[k]}</span>`).join("");
+  const stats = [
+    ["Pentagon coverage", (100 * m.pentagon_coverage).toFixed(1) + " %"],
+    ["Pentagon size boost", "× " + (m.pent_scale || 1).toFixed(2)],
+    ["Shapes", L.polygons.length],
+    ["Size across", `${m.across_min.toFixed(1)}–${m.across_max.toFixed(1)} in`],
+    ["Out of flat, max", `${m.flatness_max.toFixed(2)} in`],
+    ["Shortest edge", `${m.min_edge.toFixed(2)} in`],
+    ["Pentagons touching", m.pentagons_touching],
+  ];
+  $("stats").innerHTML = stats.map(([a, b]) => `<span>${a}</span><span class="num">${b}</span>`).join("");
+  const target = P.PENTAGON_COVERAGE;
+  $("cov-val").textContent = pct(m.pentagon_coverage);
+  const note = $("cov-note");
+  if (m.pentagon_coverage < target - 0.02) {
+    note.textContent = `Asked for ${pct(target)}, but there is no room for more on this tube.`;
+    note.className = "note warn";
+  } else if (m.min_edge < 0.5) {
+    note.textContent = `Pentagons are pushed big here, so some neighbours get very short edges (${m.min_edge.toFixed(2)} in).`;
+    note.className = "note warn";
+  } else {
+    note.textContent = "Pentagons never touch each other.";
+    note.className = "note";
+  }
+  recolour();
+}
 
 // ---- colouring ----
 let mode = "type";
@@ -185,29 +219,38 @@ const ramp = t => {   // teal -> yellow -> red
   t = Math.min(1, Math.max(0, t)) * 2; const i = Math.min(1, Math.floor(t)), f = t - i;
   return new THREE.Color(...s[i].map((v, j) => (v + (s[i + 1][j] - v) * f) / 255));
 };
+// Fixed ramp ends across all layouts, so colours compare between slider steps.
+const FLAT_MAX = Math.max(...DATA.layouts.map(l => l.metrics.flatness_max));
+const SIZE_MIN = Math.min(...DATA.layouts.map(l => l.metrics.across_min));
+const SIZE_MAX = Math.max(...DATA.layouts.map(l => l.metrics.across_max));
 function polyColour(p) {
-  if (mode === "flat") return ramp(p.flatness / m.flatness_max);
-  if (mode === "size") return ramp((p.across - m.across_min) / (m.across_max - m.across_min));
+  if (mode === "flat") return ramp(p.flatness / FLAT_MAX);
+  if (mode === "size") return ramp((p.across - SIZE_MIN) / (SIZE_MAX - SIZE_MIN));
   return new THREE.Color(css("--" + kind(p)));
 }
 function recolour() {
-  const col = geo.attributes.color.array;
+  const geo = mesh.geometry, col = geo.attributes.color.array;
   const cache = L.polygon_info.map(polyColour);
   polyOf.forEach((pi, t) => { const c = cache[pi]; for (let j = 0; j < 3; j++) col.set([c.r, c.g, c.b], (t * 3 + j) * 3); });
   geo.attributes.color.needsUpdate = true;
-  document.getElementById("legend-type").hidden = mode !== "type";
-  document.getElementById("legend-ramp").hidden = mode === "type";
-  const lo = mode === "flat" ? "0 in (flat)" : m.across_min.toFixed(1) + " in";
-  const hiTxt = mode === "flat" ? m.flatness_max.toFixed(2) + " in" : m.across_max.toFixed(1) + " in";
-  document.getElementById("ramp-lo").textContent = lo;
-  document.getElementById("ramp-hi").textContent = hiTxt;
+  $("legend-type").hidden = mode !== "type";
+  $("legend-ramp").hidden = mode === "type";
+  $("ramp-lo").textContent = mode === "flat" ? "0 in (flat)" : SIZE_MIN.toFixed(1) + " in";
+  $("ramp-hi").textContent = mode === "flat" ? FLAT_MAX.toFixed(2) + " in" : SIZE_MAX.toFixed(1) + " in";
 }
-["type", "flat", "size"].forEach(k => document.getElementById("mode-" + k).onclick = () => {
+["type", "flat", "size"].forEach(k => $("mode-" + k).onclick = () => {
   mode = k;
-  ["type", "flat", "size"].forEach(j => document.getElementById("mode-" + j).setAttribute("aria-pressed", j === k));
+  ["type", "flat", "size"].forEach(j => $("mode-" + j).setAttribute("aria-pressed", j === k));
   recolour();
 });
-recolour();
+
+// ---- coverage slider ----
+const slider = $("coverage");
+slider.max = DATA.layouts.length - 1;
+slider.value = DATA.start;
+$("ticks").innerHTML = DATA.layouts.map(l => `<span>${Math.round(100 * l.params.PENTAGON_COVERAGE)}</span>`).join("");
+slider.oninput = () => build(DATA.layouts[+slider.value]);
+build(DATA.layouts[DATA.start]);
 
 // ---- camera ----
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -221,15 +264,15 @@ function resetView() {
   camera.position.copy(centre).addScaledVector(dir, dist);
   controls.update();
 }
-document.getElementById("reset").onclick = resetView;
-document.getElementById("opt-seams").onchange = e => seams.visible = e.target.checked;
-const spin = document.getElementById("opt-spin");
+$("reset").onclick = resetView;
+$("opt-seams").onchange = e => seams.visible = e.target.checked;
+const spin = $("opt-spin");
 spin.onchange = () => controls.autoRotate = spin.checked;
 controls.autoRotateSpeed = 1.5;
 if (matchMedia("(prefers-reduced-motion: reduce)").matches) controls.enableDamping = false;
 
 // ---- picking ----
-const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), pick = document.getElementById("pick");
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), pick = $("pick");
 let down = null;
 renderer.domElement.addEventListener("pointerdown", e => down = [e.clientX, e.clientY]);
 renderer.domElement.addEventListener("pointerup", e => {
@@ -250,13 +293,13 @@ renderer.domElement.addEventListener("pointerup", e => {
 });
 
 // ---- panel collapse on phones ----
-const info = document.getElementById("info"), tg = document.getElementById("toggle");
+const info = $("info"), tg = $("toggle");
 tg.onclick = () => { const c = info.classList.toggle("collapsed"); tg.textContent = c ? "Show" : "Hide"; tg.setAttribute("aria-expanded", !c); };
 if (innerWidth <= 560) tg.click();
 
 // theme changes
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  seams.material.color.set(css("--seam")); hi.material.color.set(css("--accent")); recolour(); });
+  seamMat.color.set(css("--seam")); hiMat.color.set(css("--accent")); recolour(); });
 
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
