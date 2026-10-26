@@ -32,6 +32,7 @@ THUMB_LENGTH = 4.0      # finished height of each thumb, from crotch to tip
 THUMB_BULGE = 0.35      # how much wider the thumb gets above its base (total)
 SEAM = 3 / 8            # seam allowance on every sewn edge
 HEM = 1.0               # extra at the wrist edge, folded up for a hem
+SPLAY = 45              # version B: degrees each finger tip leans out from straight up
 # ------------------------------------------
 
 CIRC = math.pi * TUBE_DIAMETER + EASE        # finished cuff circumference
@@ -54,6 +55,24 @@ def thumb_outline(n=120):
     return np.vstack([left, tip[1:-1], right])
 
 
+def bend(pts):
+    """Version B: curve the finger part of the piece (y > 0) like a banana. The inside
+    edge (right, x > 0, the side facing the centre of the polyp) comes out longer than
+    the outside edge (left), so when sewn the finger curves outward by SPLAY degrees
+    over its straight part."""
+    if SPLAY <= 0:
+        return pts
+    kappa = math.radians(SPLAY) / BODY_H     # bend of the finger's centre line in 3D
+    rho = math.pi / (2 * kappa)              # matching bend radius of the flat piece
+    x, y = pts[:, 0], pts[:, 1]
+    phi = np.clip(y, 0, BODY_H) / rho
+    extra = np.clip(y - BODY_H, 0, None)     # the rounded tip stays straight
+    r = rho + x
+    bx = -rho + r * np.cos(phi) - extra * np.sin(phi)
+    by = r * np.sin(phi) + extra * np.cos(phi)
+    return np.where((y > 0)[:, None], np.column_stack([bx, by]), pts)
+
+
 def close(*parts):
     p = np.vstack(parts)
     return np.vstack([p, p[:1]])
@@ -73,7 +92,7 @@ def piece_a2(extra=0.0):
 def piece_b(extra=0.0):
     """Version B half thumb. Left of the middle: a strip of cuff. Right of the
     middle: half a triangle reaching the centre. The V between them starts at the crotch."""
-    return close(thumb_outline(),
+    return close(bend(thumb_outline()),
                  [(W0 / 2, -TRI_DEPTH), (0, 0), (0, -CUFF_HEIGHT - extra), (-W0 / 2, -CUFF_HEIGHT - extra)])
 
 
@@ -152,7 +171,7 @@ def main():
              [f"Cut {2 * THUMBS}", f"({THUMBS} pairs: fold fabric", "in two and cut 6)", "",
               "Left edge + tip + right edge", "+ triangle's straight edge", "= seam to its twin",
               "", "Both sides of the V", "= seams to the", "neighbouring thumb"],
-             foot, grain_x=-0.7, grain_y=(-2.6, 0.7), text_xy=(0, 2.7), slash=v_slash(b_cut))
+             foot, grain_x=-0.7, grain_y=(-2.6, 0.7), text_xy=tuple(bend(np.array([[0.0, 2.5]]))[0]), slash=v_slash(b_cut))
 
     # overview image of all pieces
     fig, axes = plt.subplots(1, 3, figsize=(11, 6.5))
@@ -166,8 +185,8 @@ def main():
             ax.plot(sl[:, 0], sl[:, 1], "k-", lw=1.4)
             ax.plot([0], [0], "ko", ms=4)
         ax.set_aspect("equal"); ax.set_title(t, fontsize=10)
-        ax.set_xlim(-2.5, 2.5); ax.set_ylim(-CUFF_HEIGHT - HEM - 0.6, THUMB_LENGTH + 0.8)
-        ax.grid(alpha=0.3); ax.set_xticks(range(-2, 3)); ax.set_yticks(range(-4, 6))
+        ax.set_xlim(-3.5, 2.5); ax.set_ylim(-CUFF_HEIGHT - HEM - 0.6, THUMB_LENGTH + 0.8)
+        ax.grid(alpha=0.3); ax.set_xticks(range(-3, 3)); ax.set_yticks(range(-4, 6))
         ax.set_xlabel("inches")
     axes[0].text(-2.4, -CUFF_HEIGHT - HEM - 0.45, "Version A", fontsize=11, weight="bold")
     axes[2].text(-2.4, -CUFF_HEIGHT - HEM - 0.45, "Version B", fontsize=11, weight="bold")
@@ -179,8 +198,10 @@ def main():
                   r_base=W0 / math.pi, r_top=WM / math.pi, thumb_length=THUMB_LENGTH,
                   tube_radius=TUBE_DIAMETER / 2)
     save_preview(polyp, "A", "Version A: thumbs in outer + inner halves", "polyp-version-a.png")
-    save_preview(polyp, "B", "Version B: thumbs in left + right halves, seam over the tip",
-                 "polyp-version-b.png")
+    print("simulating version B (takes a few minutes)...")
+    from sim_polyp import make_preview
+    make_preview("polyp-version-b.png",
+                 f"Version B, simulated from the flat pieces (fingers spread {SPLAY:g}\u00b0)")
 
     print(f"cuff circumference {CIRC:.3f}  piece width at crotch {W0:.3f}  widest {WM:.3f}")
     for name, c in [("A1", a1_cut), ("A2", a2_cut), ("B", b_cut)]:
