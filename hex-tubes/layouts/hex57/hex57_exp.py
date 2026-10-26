@@ -59,8 +59,8 @@ SEED = 7                    # change for a different random layout
 # corner of a shape is the same distance from its centre, and neighbours agree on shared edges.
 # (A bit over 1 on the ratio lets pentagons cover more of the skin, at the cost of a little
 # roundness in the shapes next to them.)
-EDGE = float(os.environ.get("EDGE", 2.8))
-PENT_SIDE_RATIO = float(os.environ.get("PENT_SIDE_RATIO", 1.0))
+EDGE = float(os.environ.get("EDGE", 2.6))
+PENT_SIDE_RATIO = float(os.environ.get("PENT_SIDE_RATIO", 1.3))
 
 
 def regular_across(k):
@@ -82,7 +82,7 @@ SIZE_MAX = 1.03 * EDGE * regular_across(6)
 SIZE_MEAN = EDGE * regular_across(6)
 SIZE_PATCH = 12.0            # size of the patches of similar-sized shapes; bigger = smoother grading
 SIZE_FOLLOWS_RADIUS = 0.7   # 0 = ignore how thin the tube is; 1 = shrink shapes in proportion
-REFERENCE_RADIUS = 6.0      # tube radius at which shapes get their full size
+REFERENCE_RADIUS = 8.0      # tube radius at which shapes get their full size
 
 # Pentagons
 PENTAGON_COVERAGE = 0.30    # share of the whole skin's area covered by pentagons (0.35 = 35 %)
@@ -96,29 +96,29 @@ PENT_APOTHEM = apothem_for(5)                       # centre to edge
 PENT_ACROSS = PENT_SIDE * regular_across(5)
 PENT_AREA = 5 * PENT_APOTHEM ** 2 * math.tan(math.pi / 5)
 HOLE_DIAMETER = round(2 * (PENT_APOTHEM - HOLE_RIM), 2)   # biggest round hole that leaves HOLE_RIM
-PENT_AIM = float(os.environ.get("PENT_AIM", 1.0))             # the neighbours pull pentagons back about 3 %, so the solver aims a bit high
+PENT_AIM = float(os.environ.get("PENT_AIM", 1.05))            # the neighbours pull pentagons back about 3 %, so the solver aims a bit high
 PENT_PULL = 0.95            # like SIZE_PULL, but for pentagons: nearly all the way to PENT_ACROSS
-PENT_WEIGHT = float(os.environ.get("PENT_WEIGHT", 3.0))
-SHAPE_WEIGHT = float(os.environ.get("SHAPE_WEIGHT", 3.0))         # pull of other shapes towards regular polygons
-SPRING_WEIGHT = float(os.environ.get("SPRING_WEIGHT", 2.0))        # pull of each edge towards its target length
-PENT_SPRING_WEIGHT = float(os.environ.get("PENT_SPRING_WEIGHT", 2.0))  # same, for a pentagon's edges
+PENT_WEIGHT = float(os.environ.get("PENT_WEIGHT", 30.0))
+SHAPE_WEIGHT = float(os.environ.get("SHAPE_WEIGHT", 8.0))         # pull of other shapes towards regular polygons
+SPRING_WEIGHT = 1.0        # pull of each edge towards its target length
+PENT_SPRING_WEIGHT = 1.0  # same, for a pentagon's edges
 PAIRS_PER_ROUND = 1         # pentagon/heptagon pairs added between settling rounds
 REMESH_ROUNDS = 14          # rounds of split / merge / swap / settle
 CORNER_RELAX_ROUNDS = float(os.environ.get("CORNER_RELAX_ROUNDS", 80))    # rounds nudging each shape towards a regular polygon
-CORNER_RELAX_STRENGTH = float(os.environ.get("CORNER_RELAX_STRENGTH", 0.5))
+CORNER_RELAX_STRENGTH = 0.5
 SIZE_PULL = 0.95            # 0..1: how strongly each shape is pulled to the size map's size (heptagons
                             # otherwise come out large and pentagons small)
-FLATTEN_ROUNDS = float(os.environ.get("FLATTEN_ROUNDS", 30))         # rounds letting corners lift off the surface so panels get flatter (0 = off)
-PLANE_WEIGHT = float(os.environ.get("PLANE_WEIGHT", 0.0))          # pull of each shape's best-fit plane on its corners while the corners are solved
+FLATTEN_ROUNDS = 0          # rounds letting corners lift off the surface so panels get flatter (0 = off)
+PLANE_WEIGHT = float(os.environ.get("PLANE_WEIGHT", 3.0))          # pull of each shape's best-fit plane on its corners while the corners are solved
 FLATTEN_STEP = 0.7          # how far each round moves a corner towards the average of its shapes' planes
-FLATTEN_MAX_OFFSET = float(os.environ.get("FLATTEN_MAX_OFFSET", 0.3))    # how far a corner may leave the surface while flattening
+FLATTEN_MAX_OFFSET = float(os.environ.get("FLATTEN_MAX_OFFSET", 0.4))    # how far a corner may leave the surface while flattening
 
 # Test tube: a cylinder whose centreline is bent along a circular arc
 TUBE_LENGTH = 96.0          # 8 ft, measured along the centreline
 TUBE_EXTRA = 15.0           # the pattern keeps going this far past each end of the 8 ft, so the 8 ft
                             # itself has no cut-off edge. Shapes out there are drawn greyed and not counted.
 TUBE_TOTAL = TUBE_LENGTH + 2 * TUBE_EXTRA
-TUBE_RADIUS = 6.0           # 12 in across
+TUBE_RADIUS = 8.0           # 16 in across
 BEND_RADIUS = 240.0         # 20 ft radius bend of the centreline (0 = straight)
 
 # Colours by number of sides
@@ -943,7 +943,7 @@ def regularise_corners(C, fixed, polys, is_end, surf, size, rounds, alpha):
 
 def flatten_corners(C, fixed, polys, surf, rounds, max_offset):
     """Let corners lift slightly off the surface so each panel gets closer to flat."""
-    if int(rounds) <= 0:
+    if rounds <= 0:
         return C
     on_surface = C.copy()
     for _ in range(int(rounds)):
@@ -1258,6 +1258,7 @@ def main():
 
     os.makedirs(os.path.join(HERE, "coverage"), exist_ok=True)
     main_result = None
+    written = set()
     for t in targets:
         m_seed = snaps[t][0]
         settle(m_seed, size, 40, step=0.2)
@@ -1271,7 +1272,8 @@ def main():
               f"shortest edge {m['min_edge']:.2f}, corner-distance spread mean {m['spread_mean']:.2f} p90 {m['spread_p90']:.2f} max {m['spread_max']:.2f}")
         if t == PENTAGON_COVERAGE:
             main_result = (C, fixed, polys, info, m)
-        if t in COVERAGE_STEPS and abs(m["pentagon_coverage"] - t) < 0.025:
+        if t in COVERAGE_STEPS and m["sides"].get(5, 0) not in written:
+            written.add(m["sides"].get(5, 0))
             with open(os.path.join(HERE, "coverage", f"layout_{round(100 * t)}.json"), "w") as f:
                 json.dump(to_layout(C, fixed, polys, info, m, None, t), f, separators=(",", ":"))
 

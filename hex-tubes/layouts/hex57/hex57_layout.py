@@ -59,8 +59,8 @@ SEED = 7                    # change for a different random layout
 # corner of a shape is the same distance from its centre, and neighbours agree on shared edges.
 # (A bit over 1 on the ratio lets pentagons cover more of the skin, at the cost of a little
 # roundness in the shapes next to them.)
-EDGE = 2.6
-PENT_SIDE_RATIO = 1.3
+EDGE = 3.0
+PENT_SIDE_RATIO = 1.15
 
 
 def regular_across(k):
@@ -82,7 +82,7 @@ SIZE_MAX = 1.03 * EDGE * regular_across(6)
 SIZE_MEAN = EDGE * regular_across(6)
 SIZE_PATCH = 12.0            # size of the patches of similar-sized shapes; bigger = smoother grading
 SIZE_FOLLOWS_RADIUS = 0.7   # 0 = ignore how thin the tube is; 1 = shrink shapes in proportion
-REFERENCE_RADIUS = 6.0      # tube radius at which shapes get their full size
+REFERENCE_RADIUS = 8.0      # tube radius at which shapes get their full size
 
 # Pentagons
 PENTAGON_COVERAGE = 0.25    # share of the whole skin's area covered by pentagons (0.35 = 35 %)
@@ -109,7 +109,7 @@ CORNER_RELAX_STRENGTH = 0.5
 SIZE_PULL = 0.95            # 0..1: how strongly each shape is pulled to the size map's size (heptagons
                             # otherwise come out large and pentagons small)
 FLATTEN_ROUNDS = 0          # rounds letting corners lift off the surface so panels get flatter (0 = off)
-PLANE_WEIGHT = 3.0          # pull of each shape's best-fit plane on its corners while the corners are solved
+PLANE_WEIGHT = 0.0          # pull of each shape's best-fit plane on its corners while the corners are solved
 FLATTEN_STEP = 0.7          # how far each round moves a corner towards the average of its shapes' planes
 FLATTEN_MAX_OFFSET = 0.4    # how far a corner may leave the surface while flattening
 
@@ -118,7 +118,7 @@ TUBE_LENGTH = 96.0          # 8 ft, measured along the centreline
 TUBE_EXTRA = 15.0           # the pattern keeps going this far past each end of the 8 ft, so the 8 ft
                             # itself has no cut-off edge. Shapes out there are drawn greyed and not counted.
 TUBE_TOTAL = TUBE_LENGTH + 2 * TUBE_EXTRA
-TUBE_RADIUS = 6.0           # 12 in across
+TUBE_RADIUS = 8.0           # 16 in across
 BEND_RADIUS = 240.0         # 20 ft radius bend of the centreline (0 = straight)
 
 # Colours by number of sides

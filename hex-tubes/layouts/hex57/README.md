@@ -150,15 +150,14 @@ That's what the hole step needs later: a shared corner list for the corner holes
 - The numbers in the older sections above (tapered 6 ft tube, 147 shapes) describe the first version.
 
 
-## Update: round shapes (equal-sided, like a geodesic)
+## Update: round shapes on a 16 in tube
 
-Remy asked that every corner of a shape sit about the same distance from the shape's centre.
+Remy asked for roundness first: every corner of a shape about the same distance from the shape's centre. The tube is now 16 in across, 8 ft long, bent on a 20 ft radius.
 
-- **Equal sides.** Every shape is aimed at a regular polygon with sides of the same length: `EDGE` (2.6 in) for hexagons and heptagons, `EDGE * PENT_SIDE_RATIO` (3.4 in) for pentagons. Neighbouring shapes agree on each shared edge length, which is what lets strips unroll without stretching. The seed layout uses the same numbers, so the pattern isn't fighting the corner solver.
-- **How round.** For every shape the script measures (farthest corner minus nearest corner) divided by the average corner distance. On the 8 ft this averages about 0.14 and is at most 0.32 (it was 0.49 on average before). Pentagons are nearly regular (longest side at most 1.11 times the shortest).
+- **Equal sides.** Every shape is aimed at a regular polygon with sides of the same length: `EDGE` (3.0 in) for hexagons and heptagons, `EDGE * PENT_SIDE_RATIO` (3.45 in) for pentagons. Neighbouring shapes agree on each shared edge length, which is what lets strips unroll without stretching. The seed layout uses the same numbers, so the pattern isn't fighting the corner solver.
+- **How round.** For every shape the script measures (farthest corner minus nearest corner) divided by the average corner distance. On the 8 ft this averages about 0.14 and is at most 0.35 (it was 0.49 on average before the change). Pentagons are nearly regular (longest side at most 1.08 times the shortest), and the other shapes' longest side averages 1.5 times the shortest.
 - **Pattern runs past the 8 ft.** `TUBE_EXTRA` (15 in) of extra tube on each end; those shapes are greyed and not counted.
-- **Trade-offs.** Three things pull against each other on a 12 in tube:
-  1. Round shapes. A regular polygon is flat, but the tube isn't, so neighbouring corners can't all agree on a plane.
-  2. Flat cells. Corners may lift up to `FLATTEN_MAX_OFFSET` (0.4 in) off the tube; cells are still about 0.33 in out of flat on average and 0.6 in at worst. Smaller cells (lower `EDGE`) are flatter.
-  3. Pentagon coverage. Pentagons can't touch, and the shapes around them must stay round, so this tube reaches about 27 % (23 % on the default 25 % step). More means bigger pentagons (`PENT_SIDE_RATIO`) and less round neighbours.
-- **Holes.** The biggest round hole that leaves 0.5 in of plastic in a pentagon this size is about 3.6 in (`HOLE_DIAMETER`). A 5 in hole needs pentagons 6.45 in across, which don't fit round and flat on a 12 in tube.
+- **Trade-offs.** Round shapes, flat cells and many pentagons pull against each other:
+  - Flat: corners may lift up to `FLATTEN_MAX_OFFSET` (0.4 in) off the tube. Cells are about 0.27 in out of flat on average and 0.6 in at worst. Smaller cells (lower `EDGE`) are flatter.
+  - Coverage: pentagons can't touch, and the shapes around them must stay round, so this tube reaches about 24 % pentagons. More means bigger pentagons (`PENT_SIDE_RATIO`) and less round neighbours (1.3 gets about 26 %).
+  - Holes: the biggest round hole that leaves 0.5 in of plastic in a pentagon this size is 3.75 in (`HOLE_DIAMETER`). A 5 in hole needs pentagons 6.45 in across.
