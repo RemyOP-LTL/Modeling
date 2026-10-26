@@ -148,3 +148,13 @@ That's what the hole step needs later: a shared corner list for the corner holes
 - `PENTAGON_COVERAGE` (default 0.35) is the share of the skin's area covered by pentagons. The script adds pentagon/heptagon pairs until it gets there, and never lets two pentagons share an edge. When there is no room for more pentagons it makes them bigger (up to `PENT_SCALE_MAX`) instead.
 - The script also writes layouts at 15, 20, 25, 30, 35 and 40 % into `coverage/`, and `viewer.html` has a slider across them. On this tube about 28 % is the most that fits at the normal pentagon size. 35 % needs pentagons about 1.75 times the size map's size, and 40 % gets squeezed neighbours with edges under 0.2 in, so 40 % is the practical limit.
 - The numbers in the older sections above (tapered 6 ft tube, 147 shapes) describe the first version.
+
+
+## Update: regular pentagons with a 5 in hole
+
+- Every pentagon is aimed at the same regular pentagon: a 5 in hole (`HOLE_DIAMETER`) with 0.5 in of plastic (`HOLE_RIM`) at the closest point. That makes each pentagon 3.0 in from its centre to each edge, a side of 4.36 in and about 6.45 in across (`PENT_ACROSS`).
+- The corner solver (`regularise_corners`) now gives every edge a target length, taken from the regular polygons on either side of it, and pulls each shape towards a regular polygon. Pentagons weigh much more than the other shapes, so they come out regular and the others take up the slack. Because both shapes at an edge agree on its length, the pieces can later be unrolled into strips without stretching.
+- The size map is a little narrower (3.5 to 7.5 in) and shapes touching a pentagon are at least `NEIGHBOUR_MIN_ACROSS` (5.6 in) so they aren't squeezed.
+- Results at the 35 % step: pentagons 6.22 to 6.51 in across, longest side at most 1.15 times the shortest, 0.43 to 0.49 in of plastic around the hole (measured from the side lengths, as if flattened). Other shapes are looser: on average the longest side is about 2.5 times the shortest. No two pentagons touch, and the most this tube allows is about 39 % pentagons.
+- Shapes cut by the tube ends are not held to these rules and look rough on purpose.
+- `viewer.html` draws the 5 in holes and shows these numbers.
