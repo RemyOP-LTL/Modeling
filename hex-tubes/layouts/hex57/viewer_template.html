@@ -85,6 +85,7 @@ input[type="range"] { width: 100%; accent-color: var(--pent); margin: 8px 0 2px;
   </div>
   <div class="row">
     <label class="chk"><input type="checkbox" id="opt-seams" checked> Seams</label>
+    <label class="chk"><input type="checkbox" id="opt-holes" checked> Pentagon holes</label>
     <label class="chk"><input type="checkbox" id="opt-spin"> Auto-spin</label>
     <button class="btn" id="reset">Reset view</button>
   </div>
@@ -128,12 +129,13 @@ const hiGeo = new THREE.BufferGeometry();
 const hi = new THREE.LineLoop(hiGeo, hiMat);
 hi.renderOrder = 2; hi.visible = false; scene.add(hi);
 
-let L, m, V, mesh, seams, polyOf, centre, height;
+const holeMat = new THREE.LineBasicMaterial({ color: 0xffffff });
+let L, m, V, mesh, seams, holes, polyOf, centre, height;
 
 // Tube runs along z in the file; turn it upright (z -> y).
 function build(layout) {
   L = layout; m = L.metrics;
-  if (mesh) { scene.remove(mesh, seams); mesh.geometry.dispose(); seams.geometry.dispose(); }
+  if (mesh) { scene.remove(mesh, seams, holes); mesh.geometry.dispose(); seams.geometry.dispose(); holes.geometry.dispose(); }
   V = L.vertices.map(([x, y, z]) => new THREE.Vector3(x, z, -y));
   const box = new THREE.Box3().setFromPoints(V);
   centre = box.getCenter(new THREE.Vector3());
@@ -175,7 +177,34 @@ function build(layout) {
   segGeo.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
   seams = new THREE.LineSegments(segGeo, seamMat);
   seams.visible = $("opt-seams").checked;
-  scene.add(mesh, seams);
+  // the hole in the middle of every pentagon: a 5 in circle in the pentagon's own flat plane,
+  // dropped onto the panel along its normal so it follows the bow of the plastic
+  const hr = (L.params.HOLE_DIAMETER || 5) / 2, hs = [];
+  const rc = new THREE.Raycaster();
+  L.polygons.forEach((poly, pi) => {
+    const p = L.polygon_info[pi];
+    if (p.sides !== 5 || p.end) return;
+    const c = new THREE.Vector3(), n = new THREE.Vector3();
+    poly.forEach(i => c.add(V[i])); c.divideScalar(poly.length);
+    poly.forEach((i, k) => n.add(V[i].clone().sub(c).cross(V[poly[(k + 1) % poly.length]].clone().sub(c))));
+    n.normalize();
+    const u = V[poly[0]].clone().sub(c); u.addScaledVector(n, -u.dot(n)).normalize();
+    const w = n.clone().cross(u);
+    const ring = [];
+    for (let k = 0; k < 48; k++) {
+      const a0 = 2 * Math.PI * k / 48;
+      const q = c.clone().addScaledVector(u, hr * Math.cos(a0)).addScaledVector(w, hr * Math.sin(a0));
+      rc.set(q.clone().addScaledVector(n, 3), n.clone().negate());
+      const hit = rc.intersectObject(mesh)[0];
+      ring.push(hit ? hit.point.addScaledVector(n, 0.05) : q);
+    }
+    ring.forEach((q0, k) => { const q1 = ring[(k + 1) % 48]; hs.push(q0.x, q0.y, q0.z, q1.x, q1.y, q1.z); });
+  });
+  const hGeo = new THREE.BufferGeometry();
+  hGeo.setAttribute("position", new THREE.Float32BufferAttribute(hs, 3));
+  holes = new THREE.LineSegments(hGeo, holeMat);
+  holes.renderOrder = 1; holes.visible = $("opt-holes").checked;
+  scene.add(mesh, seams, holes);
   hi.visible = false; $("pick").hidden = true;
 
   // text
@@ -184,16 +213,17 @@ function build(layout) {
     `${2 * P.TUBE_RADIUS} in × ${P.TUBE_LENGTH / 12} ft tube, bent on a ${P.BEND_RADIUS / 12} ft radius · seed ${P.SEED}`;
   const counts = { pent: 0, hex: 0, hept: 0, end: 0, other: 0 };
   L.polygon_info.forEach(p => counts[kind(p)]++);
-  $("legend-type").innerHTML = [["pent", "Pentagons"], ["hex", "Hexagons"], ["hept", "Heptagons"], ["end", "Cut at tube end"]]
+  $("legend-type").innerHTML = [["pent", "Pentagons"], ["hex", "Hexagons"], ["hept", "Heptagons"], ["end", "Extra length past the 8 ft"]]
     .map(([k, t]) => `<span class="sw" style="background:var(--${k})"></span><span>${t}</span><span class="num">${counts[k]}</span>`).join("");
   const stats = [
     ["Pentagon coverage", (100 * m.pentagon_coverage).toFixed(1) + " %"],
-    ["Pentagon size boost", "× " + (m.pent_scale || 1).toFixed(2)],
-    ["Shapes", L.polygons.length],
-    ["Size across", `${m.across_min.toFixed(1)}–${m.across_max.toFixed(1)} in`],
-    ["Out of flat, max", `${m.flatness_max.toFixed(2)} in`],
-    ["Shortest edge", `${m.min_edge.toFixed(2)} in`],
     ["Pentagons touching", m.pentagons_touching],
+    ["Pentagon size across", `${m.pent_across_min.toFixed(2)}–${m.pent_across_max.toFixed(2)} in`],
+    ["Pentagon longest ÷ shortest side", `${m.pent_edge_ratio_mean.toFixed(2)} avg, ${m.pent_edge_ratio_max.toFixed(2)} worst`],
+    ["Plastic around hole, closest", `${m.pent_rim_flat_min.toFixed(2)}–${m.pent_rim_flat_mean.toFixed(2)} in`],
+    ["Other shapes, longest ÷ shortest side", `${m.other_edge_ratio_mean.toFixed(1)} avg, ${m.other_edge_ratio_max.toFixed(1)} worst`],
+    ["Shortest edge", `${m.min_edge.toFixed(2)} in`],
+    ["Out of flat, all shapes", `${m.flatness_mean.toFixed(2)} avg, ${m.flatness_max.toFixed(2)} max in`],
   ];
   $("stats").innerHTML = stats.map(([a, b]) => `<span>${a}</span><span class="num">${b}</span>`).join("");
   const target = P.PENTAGON_COVERAGE;
@@ -201,9 +231,6 @@ function build(layout) {
   const note = $("cov-note");
   if (m.pentagon_coverage < target - 0.02) {
     note.textContent = `Asked for ${pct(target)}, but there is no room for more on this tube.`;
-    note.className = "note warn";
-  } else if (m.min_edge < 0.5) {
-    note.textContent = `Pentagons are pushed big here, so some neighbours get very short edges (${m.min_edge.toFixed(2)} in).`;
     note.className = "note warn";
   } else {
     note.textContent = "Pentagons never touch each other.";
@@ -248,7 +275,7 @@ function recolour() {
 const slider = $("coverage");
 slider.max = DATA.layouts.length - 1;
 slider.value = DATA.start;
-$("ticks").innerHTML = DATA.layouts.map(l => `<span>${Math.round(100 * l.params.PENTAGON_COVERAGE)}</span>`).join("");
+$("ticks").innerHTML = DATA.layouts.map(l => `<span>${Math.round(100 * l.metrics.pentagon_coverage)}</span>`).join("");
 slider.oninput = () => build(DATA.layouts[+slider.value]);
 build(DATA.layouts[DATA.start]);
 
@@ -266,6 +293,7 @@ function resetView() {
 }
 $("reset").onclick = resetView;
 $("opt-seams").onchange = e => seams.visible = e.target.checked;
+$("opt-holes").onchange = e => holes.visible = e.target.checked;
 const spin = $("opt-spin");
 spin.onchange = () => controls.autoRotate = spin.checked;
 controls.autoRotateSpeed = 1.5;

@@ -148,3 +148,15 @@ That's what the hole step needs later: a shared corner list for the corner holes
 - `PENTAGON_COVERAGE` (default 0.35) is the share of the skin's area covered by pentagons. The script adds pentagon/heptagon pairs until it gets there, and never lets two pentagons share an edge. When there is no room for more pentagons it makes them bigger (up to `PENT_SCALE_MAX`) instead.
 - The script also writes layouts at 15, 20, 25, 30, 35 and 40 % into `coverage/`, and `viewer.html` has a slider across them. On this tube about 28 % is the most that fits at the normal pentagon size. 35 % needs pentagons about 1.75 times the size map's size, and 40 % gets squeezed neighbours with edges under 0.2 in, so 40 % is the practical limit.
 - The numbers in the older sections above (tapered 6 ft tube, 147 shapes) describe the first version.
+
+
+## Update: flat, geodesic-style cells, pattern runs past the ends
+
+Remy asked for cells that are largely flat, a look like a slightly irregular geodesic wrapped around a tube, and no cut-off ends.
+
+- **Pattern runs past the 8 ft.** The script builds `TUBE_EXTRA` (15 in) of extra tube beyond each end. Shapes out there are greyed in the viewer and left out of every count and measurement, so the 8 ft itself has no rough edge.
+- **Cell size.** Flatness depends on cell size: a cell bows by roughly its width squared divided by the tube radius. Cells 6 in across on a 12 in tube bow about 0.5 in; 4 to 5 in across bow about 0.2 in. So the other shapes are about 3.8 in across (3.3 to 4.4) and the pentagons about 4.8 in.
+- **Pentagons.** Every pentagon is aimed at the same regular pentagon (`PENT_ACROSS`, 4.8 in across). The biggest round hole that leaves 0.5 in of plastic (`HOLE_RIM`) is then about 3.4 in, not 5 in. A 5 in hole with 0.5 in of rim needs pentagons 6.45 in across, which bow about 0.5 in on this tube.
+- **Corners.** Every edge gets a target length from the regular polygons on both sides, so neighbouring shapes agree on each edge length (this is what lets strips unroll without stretching). Then corners are allowed to lift up to `FLATTEN_MAX_OFFSET` (0.3 in) off the cylinder so each cell lies in a plane. That gives the faceted, geodesic look.
+- **Coverage.** The script adds pentagon/heptagon pairs until pentagons cover the chosen share of the 8 ft's area, never letting two pentagons touch. Layouts from 15 to 40 % are written to `coverage/` for the viewer's slider.
+- **Results at 35 %.** Pentagons 4.6 to 5.0 in across, longest side at most 1.3 times the shortest. About 0.19 in out of flat on average and 0.41 in at most. Other shapes are looser: the longest side is on average about 2.4 times the shortest.
