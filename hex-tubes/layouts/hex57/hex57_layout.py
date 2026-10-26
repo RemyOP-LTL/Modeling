@@ -44,6 +44,8 @@ from matplotlib.collections import PolyCollection
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+from make_viewer import make_viewer
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ============================================================================
@@ -975,6 +977,7 @@ def main():
     )
     with open(os.path.join(HERE, "layout.json"), "w") as f:
         json.dump(layout, f, indent=1)
+    make_viewer(HERE)
 
     s = m["sides"]
     print()

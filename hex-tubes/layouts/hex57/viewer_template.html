@@ -1,0 +1,267 @@
+<title>Coral Skin Viewer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+/* Layout: full-window 3D stage, one floating instrument panel top-left, tap readout bottom-left */
+:root {
+  --bg: #e9eef0; --panel: #f8fafa; --fg: #1d2a2f; --muted: #5d6e74; --line: #c9d4d7; --accent: #c7542f;
+  --stage-top: #f3f6f7; --stage-bot: #d9e2e5; --seam: #24323a;
+  --pent: #e8863a; --hex: #e5d3ad; --hept: #4d86c6; --end: #7fb07a;
+  --display: "Fraunces", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11181b; --panel: #1a2428; --fg: #e3eaec; --muted: #93a4aa; --line: #2e3d43; --accent: #ef7c55;
+  --stage-top: #1b262a; --stage-bot: #0b1113; --seam: #0a0f11; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11181b; --panel: #1a2428; --fg: #e3eaec; --muted: #93a4aa; --line: #2e3d43; --accent: #ef7c55;
+  --stage-top: #1b262a; --stage-bot: #0b1113; --seam: #0a0f11; color-scheme: dark }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); overflow: hidden; }
+#stage { position: fixed; inset: 0; background: linear-gradient(var(--stage-top), var(--stage-bot)); touch-action: none; }
+#stage canvas { display: block; }
+.panel { position: fixed; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; backdrop-filter: blur(6px); box-shadow: 0 6px 24px rgb(0 0 0 / .08); }
+#info { top: calc(12px + env(safe-area-inset-top, 0px)); left: max(12px, env(safe-area-inset-left, 0px));
+  width: min(300px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 12px; max-height: calc(100% - 24px); overflow-y: auto; }
+h1 { font-family: var(--display); font-weight: 600; font-size: 20px; margin: 0; line-height: 1.15; text-wrap: balance; }
+.sub { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; }
+.legend { display: grid; grid-template-columns: 14px 1fr auto; gap: 6px 8px; align-items: center; font-size: 13px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgb(0 0 0 / .15); }
+.num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+.label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--fg); font: 500 12.5px var(--body); padding: 7px 4px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--panel); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn { border: 1px solid var(--line); background: transparent; color: var(--fg); font: 500 12.5px var(--body); padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+.stats { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; font-size: 12.5px; }
+.ramp { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #2f9e8f, #e7d36b, #d0452f); }
+.ramp-l { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+#pick { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: max(12px, env(safe-area-inset-left, 0px)); font-size: 13px; min-width: 200px; }
+#help { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); font-size: 12px; color: var(--muted); padding: 8px 12px; }
+#toggle { display: none; }
+@media (max-width: 560px) {
+  #help { display: none; }
+  #info.collapsed > :not(header) { display: none; }
+  #toggle { display: inline-block; }
+}
+</style>
+
+<div id="stage" aria-label="3D view of the skin. Drag to spin, scroll or pinch to zoom."></div>
+
+<aside class="panel" id="info">
+  <header style="display:flex;justify-content:space-between;gap:8px;align-items:start">
+    <div><h1>Layout B</h1><p class="sub" id="subtitle"></p></div>
+    <button class="btn" id="toggle" aria-expanded="true">Hide</button>
+  </header>
+  <div>
+    <div class="label">Colour by</div>
+    <div class="seg" role="group" aria-label="Colour by">
+      <button id="mode-type" aria-pressed="true">Shape</button>
+      <button id="mode-flat" aria-pressed="false">Out of flat</button>
+      <button id="mode-size" aria-pressed="false">Size</button>
+    </div>
+  </div>
+  <div id="legend-type" class="legend"></div>
+  <div id="legend-ramp" hidden>
+    <div class="ramp"></div>
+    <div class="ramp-l"><span id="ramp-lo"></span><span id="ramp-hi"></span></div>
+  </div>
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="opt-seams" checked> Seams</label>
+    <label class="chk"><input type="checkbox" id="opt-spin"> Auto-spin</label>
+    <button class="btn" id="reset">Reset view</button>
+  </div>
+  <div>
+    <div class="label">Measurements</div>
+    <div class="stats" id="stats"></div>
+  </div>
+</aside>
+
+<div class="panel" id="pick" hidden></div>
+<div class="panel" id="help">Drag to spin · Right-drag to slide · Scroll to zoom · Click a panel for its numbers</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const L = /*LAYOUT_JSON*/null;
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const NAMES = { 5: "Pentagon", 6: "Hexagon", 7: "Heptagon" };
+const kind = p => p.end ? "end" : ({ 5: "pent", 6: "hex", 7: "hept" }[p.sides] || "hex");
+const m = L.metrics;
+
+document.getElementById("subtitle").textContent =
+  `Hexagons with pentagon/heptagon pairs · seed ${L.params.SEED}`;
+
+// legend with counts
+const counts = { pent: 0, hex: 0, hept: 0, end: 0 };
+L.polygon_info.forEach(p => counts[kind(p)]++);
+const legend = document.getElementById("legend-type");
+[["pent", "Pentagons"], ["hex", "Hexagons"], ["hept", "Heptagons"], ["end", "Cut at tube end"]].forEach(([k, t]) => {
+  legend.insertAdjacentHTML("beforeend",
+    `<span class="sw" style="background:var(--${k})"></span><span>${t}</span><span class="num">${counts[k]}</span>`);
+});
+const stats = [
+  ["Shapes", L.polygons.length],
+  ["Size across", `${m.across_min.toFixed(1)}–${m.across_max.toFixed(1)} in`],
+  ["Average size", `${m.across_mean.toFixed(1)} in`],
+  ["Out of flat, max", `${m.flatness_max.toFixed(2)} in`],
+  ["Shortest edge", `${m.min_edge.toFixed(2)} in`],
+  ["Pentagons touching", m.pentagons_touching],
+];
+document.getElementById("stats").innerHTML =
+  stats.map(([a, b]) => `<span>${a}</span><span class="num">${b}</span>`).join("");
+
+// ---- scene ----
+const stage = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.5, 2000);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.65);
+camera.add(sun); sun.position.set(30, 50, 40); scene.add(camera);
+
+// Tube runs along z in the file; turn it upright (z -> y).
+const V = L.vertices.map(([x, y, z]) => new THREE.Vector3(x, z, -y));
+const box = new THREE.Box3().setFromPoints(V);
+const centre = box.getCenter(new THREE.Vector3());
+const height = box.max.y - box.min.y;
+
+// One fan of triangles per panel, from its centre, so bowed panels still render.
+// Each panel is lit with its own average normal, so it reads as one piece of plastic.
+const pos = [], nrm = [], polyOf = [];
+L.polygons.forEach((poly, pi) => {
+  const c = new THREE.Vector3(), n = new THREE.Vector3();
+  poly.forEach(i => c.add(V[i])); c.divideScalar(poly.length);
+  poly.forEach((i, k) => {
+    const a = V[i].clone().sub(c), b = V[poly[(k + 1) % poly.length]].clone().sub(c);
+    n.add(a.cross(b));
+  });
+  n.normalize();
+  for (let k = 0; k < poly.length; k++) {
+    const a = V[poly[k]], b = V[poly[(k + 1) % poly.length]];
+    pos.push(c.x, c.y, c.z, a.x, a.y, a.z, b.x, b.y, b.z);
+    for (let j = 0; j < 3; j++) nrm.push(n.x, n.y, n.z);
+    polyOf.push(pi);
+  }
+});
+const geo = new THREE.BufferGeometry();
+geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+geo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(pos.length), 3));
+const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+  vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0,
+  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+scene.add(mesh);
+
+// seams: each shared edge once
+const seen = new Set(), seg = [];
+L.polygons.forEach(poly => poly.forEach((a, k) => {
+  const b = poly[(k + 1) % poly.length], key = a < b ? a + "_" + b : b + "_" + a;
+  if (seen.has(key)) return; seen.add(key);
+  seg.push(V[a].x, V[a].y, V[a].z, V[b].x, V[b].y, V[b].z);
+}));
+const segGeo = new THREE.BufferGeometry();
+segGeo.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+const seams = new THREE.LineSegments(segGeo, new THREE.LineBasicMaterial({ color: css("--seam") }));
+scene.add(seams);
+
+// highlight outline for the picked panel
+const hiGeo = new THREE.BufferGeometry();
+const hi = new THREE.LineLoop(hiGeo, new THREE.LineBasicMaterial({ color: css("--accent"), depthTest: false }));
+hi.renderOrder = 2; hi.visible = false; scene.add(hi);
+
+// ---- colouring ----
+let mode = "type";
+const ramp = t => {   // teal -> yellow -> red
+  const s = [[0x2f, 0x9e, 0x8f], [0xe7, 0xd3, 0x6b], [0xd0, 0x45, 0x2f]];
+  t = Math.min(1, Math.max(0, t)) * 2; const i = Math.min(1, Math.floor(t)), f = t - i;
+  return new THREE.Color(...s[i].map((v, j) => (v + (s[i + 1][j] - v) * f) / 255));
+};
+function polyColour(p) {
+  if (mode === "flat") return ramp(p.flatness / m.flatness_max);
+  if (mode === "size") return ramp((p.across - m.across_min) / (m.across_max - m.across_min));
+  return new THREE.Color(css("--" + kind(p)));
+}
+function recolour() {
+  const col = geo.attributes.color.array;
+  const cache = L.polygon_info.map(polyColour);
+  polyOf.forEach((pi, t) => { const c = cache[pi]; for (let j = 0; j < 3; j++) col.set([c.r, c.g, c.b], (t * 3 + j) * 3); });
+  geo.attributes.color.needsUpdate = true;
+  document.getElementById("legend-type").hidden = mode !== "type";
+  document.getElementById("legend-ramp").hidden = mode === "type";
+  const lo = mode === "flat" ? "0 in (flat)" : m.across_min.toFixed(1) + " in";
+  const hiTxt = mode === "flat" ? m.flatness_max.toFixed(2) + " in" : m.across_max.toFixed(1) + " in";
+  document.getElementById("ramp-lo").textContent = lo;
+  document.getElementById("ramp-hi").textContent = hiTxt;
+}
+["type", "flat", "size"].forEach(k => document.getElementById("mode-" + k).onclick = () => {
+  mode = k;
+  ["type", "flat", "size"].forEach(j => document.getElementById("mode-" + j).setAttribute("aria-pressed", j === k));
+  recolour();
+});
+recolour();
+
+// ---- camera ----
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+function resetView() {
+  // back off far enough that the whole tube fits the window
+  const fit = height * 0.6 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const dist = fit * Math.max(1, 0.45 / camera.aspect);
+  const dir = new THREE.Vector3(1, 0.12, 0.7).normalize();
+  controls.target.copy(centre);
+  camera.position.copy(centre).addScaledVector(dir, dist);
+  controls.update();
+}
+document.getElementById("reset").onclick = resetView;
+document.getElementById("opt-seams").onchange = e => seams.visible = e.target.checked;
+const spin = document.getElementById("opt-spin");
+spin.onchange = () => controls.autoRotate = spin.checked;
+controls.autoRotateSpeed = 1.5;
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) controls.enableDamping = false;
+
+// ---- picking ----
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), pick = document.getElementById("pick");
+let down = null;
+renderer.domElement.addEventListener("pointerdown", e => down = [e.clientX, e.clientY]);
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(mesh)[0];
+  if (!hit) { hi.visible = false; pick.hidden = true; return; }
+  const pi = polyOf[hit.faceIndex], p = L.polygon_info[pi];
+  hiGeo.setFromPoints(L.polygons[pi].map(i => V[i])); hi.visible = true;
+  pick.hidden = false;
+  pick.innerHTML = `<div class="label">Panel ${pi + 1}</div><div class="stats">
+    <span>Shape</span><span class="num">${NAMES[p.sides] || p.sides + " sides"}${p.end ? ", cut" : ""}</span>
+    <span>Size across</span><span class="num">${p.across.toFixed(2)} in</span>
+    <span>Area</span><span class="num">${p.area.toFixed(1)} sq in</span>
+    <span>Out of flat</span><span class="num">${p.flatness.toFixed(2)} in</span></div>`;
+});
+
+// ---- panel collapse on phones ----
+const info = document.getElementById("info"), tg = document.getElementById("toggle");
+tg.onclick = () => { const c = info.classList.toggle("collapsed"); tg.textContent = c ? "Show" : "Hide"; tg.setAttribute("aria-expanded", !c); };
+if (innerWidth <= 560) tg.click();
+
+// theme changes
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  seams.material.color.set(css("--seam")); hi.material.color.set(css("--accent")); recolour(); });
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize(); resetView();
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script>

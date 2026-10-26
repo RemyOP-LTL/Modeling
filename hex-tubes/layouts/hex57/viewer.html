@@ -1,0 +1,270 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coral Skin Viewer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+/* Layout: full-window 3D stage, one floating instrument panel top-left, tap readout bottom-left */
+:root {
+  --bg: #e9eef0; --panel: #f8fafa; --fg: #1d2a2f; --muted: #5d6e74; --line: #c9d4d7; --accent: #c7542f;
+  --stage-top: #f3f6f7; --stage-bot: #d9e2e5; --seam: #24323a;
+  --pent: #e8863a; --hex: #e5d3ad; --hept: #4d86c6; --end: #7fb07a;
+  --display: "Fraunces", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11181b; --panel: #1a2428; --fg: #e3eaec; --muted: #93a4aa; --line: #2e3d43; --accent: #ef7c55;
+  --stage-top: #1b262a; --stage-bot: #0b1113; --seam: #0a0f11; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11181b; --panel: #1a2428; --fg: #e3eaec; --muted: #93a4aa; --line: #2e3d43; --accent: #ef7c55;
+  --stage-top: #1b262a; --stage-bot: #0b1113; --seam: #0a0f11; color-scheme: dark }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); overflow: hidden; }
+#stage { position: fixed; inset: 0; background: linear-gradient(var(--stage-top), var(--stage-bot)); touch-action: none; }
+#stage canvas { display: block; }
+.panel { position: fixed; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; backdrop-filter: blur(6px); box-shadow: 0 6px 24px rgb(0 0 0 / .08); }
+#info { top: calc(12px + env(safe-area-inset-top, 0px)); left: max(12px, env(safe-area-inset-left, 0px));
+  width: min(300px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 12px; max-height: calc(100% - 24px); overflow-y: auto; }
+h1 { font-family: var(--display); font-weight: 600; font-size: 20px; margin: 0; line-height: 1.15; text-wrap: balance; }
+.sub { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; }
+.legend { display: grid; grid-template-columns: 14px 1fr auto; gap: 6px 8px; align-items: center; font-size: 13px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgb(0 0 0 / .15); }
+.num { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+.label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--fg); font: 500 12.5px var(--body); padding: 7px 4px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--panel); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn { border: 1px solid var(--line); background: transparent; color: var(--fg); font: 500 12.5px var(--body); padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+.stats { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; font-size: 12.5px; }
+.ramp { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #2f9e8f, #e7d36b, #d0452f); }
+.ramp-l { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+#pick { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: max(12px, env(safe-area-inset-left, 0px)); font-size: 13px; min-width: 200px; }
+#help { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); font-size: 12px; color: var(--muted); padding: 8px 12px; }
+#toggle { display: none; }
+@media (max-width: 560px) {
+  #help { display: none; }
+  #info.collapsed > :not(header) { display: none; }
+  #toggle { display: inline-block; }
+}
+</style>
+
+<div id="stage" aria-label="3D view of the skin. Drag to spin, scroll or pinch to zoom."></div>
+
+<aside class="panel" id="info">
+  <header style="display:flex;justify-content:space-between;gap:8px;align-items:start">
+    <div><h1>Layout B</h1><p class="sub" id="subtitle"></p></div>
+    <button class="btn" id="toggle" aria-expanded="true">Hide</button>
+  </header>
+  <div>
+    <div class="label">Colour by</div>
+    <div class="seg" role="group" aria-label="Colour by">
+      <button id="mode-type" aria-pressed="true">Shape</button>
+      <button id="mode-flat" aria-pressed="false">Out of flat</button>
+      <button id="mode-size" aria-pressed="false">Size</button>
+    </div>
+  </div>
+  <div id="legend-type" class="legend"></div>
+  <div id="legend-ramp" hidden>
+    <div class="ramp"></div>
+    <div class="ramp-l"><span id="ramp-lo"></span><span id="ramp-hi"></span></div>
+  </div>
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="opt-seams" checked> Seams</label>
+    <label class="chk"><input type="checkbox" id="opt-spin"> Auto-spin</label>
+    <button class="btn" id="reset">Reset view</button>
+  </div>
+  <div>
+    <div class="label">Measurements</div>
+    <div class="stats" id="stats"></div>
+  </div>
+</aside>
+
+<div class="panel" id="pick" hidden></div>
+<div class="panel" id="help">Drag to spin · Right-drag to slide · Scroll to zoom · Click a panel for its numbers</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const L = {"params":{"SEED":7,"SIZE_MIN":3.0,"SIZE_MAX":7.0,"SIZE_MEAN":5.0,"SIZE_PATCH":12.0,"SIZE_FOLLOWS_RADIUS":0.7,"EXTRA_PAIRS":4,"FLATTEN_ROUNDS":20,"FLATTEN_MAX_OFFSET":0.15,"TUBE_LENGTH":72.0,"TUBE_RADIUS":6.25},"vertices":[[-3.2969,-0.9933,3.5248],[1.9359,-3.5439,3.0388],[-0.3496,-3.5027,2.5391],[3.6688,-2.692,0.7746],[4.5047,1.6859,-1.9261],[6.5867,2.6917,1.8867],[-1.1079,6.182,5.4444],[-3.8605,2.6161,3.1625],[-0.8463,-1.8903,6.7073],[-1.9738,-0.0032,7.7672],[1.1862,-2.8432,7.4095],[6.6342,-1.0945,3.7722],[7.782,2.9826,3.772],[5.2555,-2.6617,5.8958],[6.1541,6.1979,3.9949],[8.2339,0.5646,5.0742],[3.1568,7.422,3.9442],[-0.4798,6.9189,7.2049],[-2.7595,1.4989,6.6308],[-2.1156,4.3433,9.0724],[-1.5663,0.2729,10.344],[-0.1472,-1.3992,11.8832],[1.9579,-2.8937,10.1553],[5.2741,-3.3383,11.0212],[6.7912,8.0059,7.7371],[2.5901,8.8099,9.6072],[0.19,7.6546,10.7595],[-0.7378,6.7298,8.891],[-2.0165,3.2487,11.0915],[0.3397,-1.1428,14.8928],[-1.1541,2.3385,15.9722],[2.7388,-2.891,16.3228],[10.2821,5.8342,11.1571],[4.3378,9.2163,13.4121],[8.4346,8.3098,16.8214],[1.8163,8.5248,15.2653],[-1.4507,4.0679,13.7203],[9.4386,-1.6383,15.3356],[11.2064,4.3144,13.7855],[11.1424,5.1668,16.7199],[7.5677,8.8585,14.1559],[6.5465,8.7672,19.4275],[2.548,-3.0151,19.894],[-0.3756,0.0459,21.1573],[4.6753,-3.9643,22.1775],[10.8079,2.8578,26.1334],[11.4564,3.2868,19.6987],[7.4414,7.9101,22.656],[5.0443,7.774,25.146],[2.3243,8.2611,18.3696],[-0.8605,2.7059,19.1113],[-0.8075,0.028,24.6014],[3.4682,-4.5952,25.6748],[9.588,4.4583,28.7417],[5.6919,6.9249,28.208],[-0.2366,3.962,29.3301],[-0.1274,-2.3463,26.8173],[-0.8313,-2.3959,30.3303],[10.1556,-1.671,25.6461],[5.29,-5.3769,28.3622],[2.1401,4.6196,34.9355],[-1.1332,1.6452,31.6363],[-0.7494,2.2082,34.6383],[0.2159,-4.7074,32.4969],[5.9931,-6.6862,33.6342],[4.1529,-6.216,31.2791],[9.1063,-4.7425,33.8246],[9.8657,-2.9641,31.538],[10.3557,0.4995,32.9586],[9.6445,3.3631,31.7313],[7.3324,4.7266,33.4671],[3.9031,4.6141,37.1412],[-0.8904,0.9836,37.4664],[-0.068,-5.1804,35.6263],[-1.275,-2.5598,38.1307],[5.3774,-7.5247,36.2342],[2.0865,-7.2255,37.4833],[9.8063,-4.4848,36.3327],[9.4407,-5.6712,38.1049],[10.3474,0.2215,35.8421],[10.6203,-1.6256,37.4543],[8.7269,2.4463,39.9161],[8.7972,2.6871,37.3776],[3.7184,4.0216,39.4873],[6.0132,3.6891,40.9921],[0.712,2.4707,39.9664],[-1.1065,-3.2843,41.8778],[0.1617,-6.4033,42.9209],[2.1042,-7.77,40.5067],[4.9053,-8.6759,41.8478],[10.0217,-5.5409,40.4209],[6.8892,-8.0968,40.4909],[9.994,0.8876,41.2212],[10.1919,0.7178,43.695],[8.1689,2.5707,44.6706],[6.0688,3.378,43.5786],[3.1892,3.064,44.5663],[0.8905,1.9378,43.0526],[-0.7785,-0.8606,44.0387],[0.5116,-7.1848,45.9417],[5.3104,-9.0964,44.5576],[3.5579,-8.9856,46.6245],[9.1948,-7.0637,41.773],[10.9154,-5.4064,45.227],[8.2537,2.5874,46.9598],[6.1218,3.2169,48.3947],[-0.1267,-6.1775,48.5347],[3.0596,-8.8531,51.1306],[4.3524,-9.2585,49.1713],[7.8838,-8.7682,52.1643],[8.0283,-8.4621,45.4104],[11.3978,-5.0301,49.2733],[11.5229,-1.4799,51.4243],[9.606,1.7395,50.5466],[10.5444,0.8465,52.2194],[6.8428,3.3793,50.8147],[1.2593,1.8731,48.8134],[-0.6895,-0.8413,47.2959],[-1.005,-2.9488,49.0412],[0.492,-7.1193,50.8256],[6.1702,-8.813,56.1942],[1.2852,-7.9101,56.3052],[10.2879,-3.5086,59.4509],[11.0921,-0.6597,56.3253],[7.8843,3.3682,55.4324],[1.2417,2.2035,51.6356],[2.7779,3.3597,53.3259],[-1.1793,-2.6193,51.9138],[-0.5938,-0.1133,52.6504],[4.7589,-6.4061,62.4731],[9.5238,0.3895,60.3941],[6.5922,2.7022,62.402],[7.0387,3.7475,57.9792],[3.3621,4.1977,58.4999],[2.0305,3.6833,56.2772],[-0.2044,1.9853,56.6782],[-1.0224,0.2248,54.8969],[0.0753,-5.7536,60.4409],[1.0776,-4.7202,64.3522],[0.041,-3.1871,66.486],[8.848,-1.4848,62.5821],[3.288,-2.811,67.2929],[7.9266,2.7203,60.2954],[5.1507,1.5241,65.9461],[4.1175,3.596,62.9028],[-0.9952,1.2674,58.5101],[-1.4146,-4.0988,58.7022],[-1.6671,0.9333,64.0099],[-1.4452,-2.2695,63.9355],[0.0634,-2.7511,67.9816],[4.8592,0.5122,67.1745],[2.9354,2.3079,69.2182],[2.5029,3.5022,65.956],[0.0889,3.9173,68.6118],[-2.29,2.1393,66.8271],[-2.1555,0.9389,65.5789],[3.953,-4.5435,65.0929],[0.302,-4.6572,63.2202],[-1.6859,-1.5969,60.6725],[-1.7426,-0.1981,63.0681],[-2.4175,-1.1107,67.9913],[0.6276,-5.6434,61.8577],[2.895,6.7464,2.3486],[4.7247,7.6381,5.0235],[7.7632,-5.5047,61.8299],[2.708,-0.7448,69.758],[-1.2355,-4.8709,57.1766],[8.3757,8.1293,11.5548],[8.7154,5.8468,6.907],[5.1233,-8.5473,57.9022],[8.4221,-7.6099,56.6643],[-0.8983,3.4292,66.6925],[10.3126,-4.8584,58.1646],[10.8059,-4.8823,56.1065],[-0.2808,2.7291,63.5928],[-0.006,6.8231,3.9036],[6.2386,-2.3075,65.2677],[0.0956,-6.6419,53.3017],[3.4213,-8.8894,53.5498],[-0.4638,6.3022,2.291],[11.2232,-5.3757,51.675],[11.6085,-2.0745,49.1331],[3.8462,0.9042,68.7324],[2.028,3.5768,67.8767],[4.2534,9.2095,10.8994],[1.5671,7.9721,6.5164],[-3.5343,1.0957,4.5439],[-1.0801,-3.2822,62.8614],[6.3857,-5.3564,63.1799],[-2.1093,-1.1472,66.4015],[2.2795,-2.1552,68.6707],[4.7109,-7.3575,60.9505],[0.0735,-6.6214,57.5087],[-1.68,-1.0976,57.9691],[-1.6534,-0.2473,61.3966],[1.4131,7.5277,4.8153],[1.5178,-8.0678,54.7514],[2.2209,-7.5296,59.3392],[8.6956,-6.8251,58.5005],[9.8365,-6.8501,55.0573],[6.0159,-9.0594,54.1904],[-1.1221,-4.4088,53.5441],[6.8675,8.6011,9.6857],[2.7574,8.5456,7.668],[5.6822,-7.8525,59.7152],[0.0863,3.2399,65.0003],[9.1604,-3.5571,61.5265],[2.1121,-6.4069,61.879],[10.2839,1.0875,9.3594],[11.7114,-3.2101,52.9889],[7.9243,5.1415,4.9539],[5.077,8.201,6.6109],[3.5326,3.3516,64.9378],[-2.5226,3.7482,6.9076],[9.9224,-7.1012,53.0628],[10.917,-5.9859,47.696],[0.4904,-6.5821,59.1499],[2.8971,-8.2162,57.8124],[-1.056,-4.3874,60.182],[5.0178,5.7444,2.3033],[10.9963,-3.2883,41.4685],[-2.0745,5.4422,1.8889],[9.0141,-2.6064,22.0915],[7.5594,-8.9728,49.8707],[2.5761,3.7859,61.038],[10.6213,0.5441,12.7133],[10.8068,4.6689,22.8803],[10.1962,-1.3073,18.9848],[4.8825,-1.6087,66.7291],[5.5846,-4.27,64.5657],[9.1772,-0.0267,7.6507],[-1.5326,-4.112,55.5273],[7.7294,-6.7921,60.1117],[5.5614,-1.2439,1.6814],[6.0285,-3.1335,14.3417],[6.5865,-2.6409,8.5472],[0.0949,7.198,13.3239],[7.01,-7.4933,38.0426],[9.4467,-7.2938,43.8151],[2.9528,-3.7141,66.3048],[2.742,-5.3099,64.1382],[6.1354,3.6714,53.0455],[5.0998,4.6549,1.1037],[-2.9814,4.3603,3.5066],[5.7373,1.0074,0.4167],[8.7478,-8.2965,47.9552],[2.7657,-7.244,60.6327],[3.1901,-6.094,63.0671],[-1.6394,-1.6786,56.1101],[6.6372,1.1859,64.3483],[3.0057,-3.2199,5.4585],[3.8947,4.2242,-0.8937],[7.569,-1.0512,64.0828],[-1.7844,-2.2494,4.4169],[9.9673,4.7364,8.6443],[10.7028,-0.7216,58.5013],[9.3059,-3.3038,28.5256],[10.826,-1.6835,39.9874],[11.1578,-0.977,45.1454],[-0.8569,1.4804,60.5516],[3.3469,2.9874,47.5645],[2.008,5.5505,-0.8416],[11.273,-3.4476,44.0005],[11.5412,-2.9187,54.9934],[10.1921,1.3275,54.6526],[0.3507,2.8969,61.647],[0.9653,6.3242,23.9153],[1.6563,6.3356,1.0854],[7.197,4.1376,36.1662],[-1.7581,-2.0386,59.0088],[-1.2756,-3.3903,61.4476],[9.8669,1.3158,48.2602],[0.5615,6.3982,20.3306],[-1.0451,-2.1714,68.9667],[0.8877,-3.9484,65.707],[-1.4319,-2.1152,65.3997],[11.292,-0.8684,47.4862],[-0.4117,4.076,26.0794],[-2.3371,4.8307,5.3819],[3.6848,5.7155,32.7939],[3.2099,6.2235,30.2549],[-3.6921,-1.2249,2.3208],[-4.2997,2.3666,1.673],[-4.3333,0.6058,2.1494],[-0.5321,-3.7043,1.455],[-2.4549,-2.7144,2.1174],[3.3491,-2.5425,-0.7081],[1.5049,-3.6944,0.4765],[4.1532,1.9361,-2.2641],[4.3186,-0.4957,-1.7077],[1.1821,5.2631,-1.7104],[2.8823,4.0882,-2.2178],[-2.3969,5.0972,0.0477],[-0.7462,5.5938,-0.873],[-3.6569,3.9168,0.9599],[-2.65,-0.5827,67.9673],[-0.8067,-2.1383,69.2575],[-1.9256,-1.6,68.5806],[1.9231,-1.1509,70.3069],[0.4733,-2.0698,69.8528],[2.7332,2.1198,69.8392],[2.7643,0.4121,70.301],[0.3253,3.9589,68.2044],[1.8445,3.4393,69.0682],[-2.4006,2.2704,67.3402],[-1.3027,3.4535,67.5567],[-2.8597,0.7192,67.5262]],"polygons":[[281,0,186,7,282,283],[284,2,253,0,281,285],[286,3,1,2,284,287],[288,4,244,233,3,286,289],[290,261,251,4,288,291],[292,221,179,267,261,290,293],[282,7,243,221,292,294],[0,253,8,9,18,186],[1,250,10,8,253,2],[1,3,233,11,13,250],[5,12,15,11,233,244],[5,242,219,14,210,12],[162,219,242,251,261,267],[16,162,267,179,175,195],[7,186,18,213,278,243],[9,20,28,19,213,18],[8,10,22,21,20,9],[10,250,13,235,23,22],[11,15,230,235,13],[12,210,168,254,208,230,15],[16,195,185,203,211,163],[6,278,213,19,27,17],[20,21,29,30,36,28],[21,22,23,234,31,29],[23,235,230,208,225,37,234],[32,38,225,208,254],[33,40,167,202,184],[25,26,236,35,33,184],[19,28,36,236,26,27],[30,50,272,49,35,236,36],[29,31,42,43,50,30],[31,234,37,227,222,44,42],[32,167,40,34,39,38],[33,35,49,41,34,40],[37,225,38,39,46,227],[34,41,47,226,46,39],[41,49,272,266,48,47],[43,51,277,266,272,50],[42,44,52,56,51,43],[44,222,58,256,59,52],[45,58,222,227,46,226],[45,226,47,48,54,53],[48,266,277,55,280,54],[51,56,57,61,55,277],[45,53,69,68,67,256,58],[53,54,280,279,70,69],[60,71,268,70,279],[55,61,62,60,279,280],[57,63,73,74,72,62,61],[52,59,65,63,57,56],[59,256,67,66,64,65],[60,62,72,85,83,71],[63,65,64,75,76,73],[64,66,77,78,237,75],[66,67,68,79,80,77],[68,69,70,268,82,79],[71,83,84,81,82,268],[72,74,86,98,97,85],[73,76,88,87,86,74],[75,237,91,89,88,76],[77,80,257,220,90,78],[79,82,81,92,257,80],[81,84,95,94,93,92],[83,85,97,96,95,84],[86,87,99,106,118,117,98],[87,88,89,100,101,99],[89,91,102,238,110,100],[90,220,262,103,238,102],[93,94,104,271,276,258],[94,95,96,260,105,104],[96,97,98,117,116,260],[99,101,108,107,119,106],[100,110,245,223,108,101],[103,215,245,110,238],[103,262,258,276,181,111,215],[104,105,115,113,271],[105,260,116,125,126,241,115],[106,119,177,201,127,118],[107,108,223,109,200,178],[109,214,199,170,120,200],[173,199,214,180,209,263],[112,114,264,123,263,209],[113,115,241,124,264,114],[116,117,118,127,128,125],[127,201,231,248,136,128],[121,192,166,231,201,177,196],[169,204,191,246,197,217],[122,206,164,232,198,172],[122,255,130,140,206],[123,264,124,132,142,130,255],[124,241,126,134,133,132],[125,128,136,135,134,126],[146,269,193,248,231,166],[138,157,161,207,247,240],[129,191,204,232,164,188],[140,252,176,229,188,164,206],[130,142,131,249,252,140],[131,142,132,133,224,144],[133,134,135,145,259,265,224],[135,136,248,193,145],[147,159,148,275,189,155],[138,274,139,275,148,187,157],[139,274,239,141,190,149],[141,228,150,182,165,190],[143,150,228,176,252,249],[131,144,212,143,249],[144,224,265,174,205,152,212],[147,155,154,171,205,174],[295,160,273,296,297],[296,273,149,190,165,298,299],[298,165,182,151,300,301],[300,151,183,153,302,303],[302,153,171,154,304,305],[304,154,155,189,160,295,306],[129,188,229,156,240,247],[148,159,194,158,270,187],[139,149,273,160,189,275],[137,216,197,246,207,161],[14,219,162,16,163],[24,202,167,32,254,168],[120,170,198,232,204,169],[122,172,173,263,123,255],[147,174,265,259,194,159],[6,17,185,195,175],[6,175,179,221,243,278],[107,178,196,177,119],[111,181,112,209,180],[143,212,152,183,151,182,150],[152,205,171,153,183],[17,27,26,25,203,185],[137,161,157,187,270,218],[137,218,146,166,192,216],[145,193,269,158,194,259],[121,217,197,216,192],[170,199,173,172,198],[120,169,217,121,196,178,200],[24,211,203,25,184,202],[112,181,276,271,113,114],[14,163,211,24,168,210],[109,223,245,215,111,180,214],[4,251,242,5,244],[141,239,156,229,176,228],[78,90,102,91,237],[138,240,156,239,274],[129,247,207,246,191],[92,93,258,262,220,257],[146,218,270,158,269]],"polygon_info":[{"sides":6,"end":true,"area":7.346,"across":3.058,"flatness":0.2816},{"sides":6,"end":true,"area":7.244,"across":3.037,"flatness":0.3567},{"sides":6,"end":true,"area":8.526,"across":3.295,"flatness":0.4598},{"sides":7,"end":true,"area":12.704,"across":4.022,"flatness":0.5164},{"sides":6,"end":true,"area":5.627,"across":2.677,"flatness":0.4347},{"sides":7,"end":true,"area":12.091,"across":3.924,"flatness":0.3639},{"sides":6,"end":true,"area":7.923,"across":3.176,"flatness":0.2762},{"sides":6,"end":false,"area":13.277,"across":4.112,"flatness":0.3051},{"sides":6,"end":false,"area":16.274,"across":4.552,"flatness":0.3507},{"sides":6,"end":false,"area":17.695,"across":4.747,"flatness":0.3186},{"sides":6,"end":false,"area":15.632,"across":4.461,"flatness":0.2156},{"sides":6,"end":false,"area":12.305,"across":3.958,"flatness":0.1842},{"sides":6,"end":false,"area":11.066,"across":3.754,"flatness":0.2087},{"sides":6,"end":false,"area":9.268,"across":3.435,"flatness":0.0996},{"sides":6,"end":false,"area":11.084,"across":3.757,"flatness":0.2334},{"sides":6,"end":false,"area":14.959,"across":4.364,"flatness":0.2833},{"sides":6,"end":false,"area":18.01,"across":4.789,"flatness":0.359},{"sides":6,"end":false,"area":20.67,"across":5.13,"flatness":0.3617},{"sides":5,"end":false,"area":15.461,"across":4.437,"flatness":0.2368},{"sides":7,"end":false,"area":25.334,"across":5.679,"flatness":0.2196},{"sides":6,"end":false,"area":9.588,"across":3.494,"flatness":0.0887},{"sides":6,"end":false,"area":10.872,"across":3.721,"flatness":0.2047},{"sides":6,"end":false,"area":23.818,"across":5.507,"flatness":0.3737},{"sides":6,"end":false,"area":28.074,"across":5.979,"flatness":0.6073},{"sides":7,"end":false,"area":38.496,"across":7.001,"flatness":0.4786},{"sides":5,"end":false,"area":19.558,"across":4.99,"flatness":0.2076},{"sides":5,"end":false,"area":13.374,"across":4.127,"flatness":0.184},{"sides":6,"end":false,"area":18.646,"across":4.872,"flatness":0.2797},{"sides":6,"end":false,"area":18.692,"across":4.878,"flatness":0.175},{"sides":7,"end":false,"area":37.621,"across":6.921,"flatness":0.5852},{"sides":6,"end":false,"area":32.123,"across":6.395,"flatness":0.5945},{"sides":7,"end":false,"area":48.874,"across":7.889,"flatness":0.7416},{"sides":6,"end":false,"area":25.655,"across":5.715,"flatness":0.235},{"sides":6,"end":false,"area":28.581,"across":6.032,"flatness":0.3791},{"sides":6,"end":false,"area":36.211,"across":6.79,"flatness":0.4025},{"sides":6,"end":false,"area":35.638,"across":6.736,"flatness":0.4994},{"sides":6,"end":false,"area":35.449,"across":6.718,"flatness":0.4792},{"sides":6,"end":false,"area":34.429,"across":6.621,"flatness":0.5293},{"sides":6,"end":false,"area":35.155,"across":6.69,"flatness":0.5753},{"sides":6,"end":false,"area":37.885,"across":6.945,"flatness":0.5499},{"sides":6,"end":false,"area":40.119,"across":7.147,"flatness":0.5797},{"sides":6,"end":false,"area":36.355,"across":6.804,"flatness":0.5661},{"sides":6,"end":false,"area":32.912,"across":6.473,"flatness":0.4982},{"sides":6,"end":false,"area":34.013,"across":6.581,"flatness":0.4377},{"sides":7,"end":false,"area":42.331,"across":7.341,"flatness":0.6133},{"sides":6,"end":false,"area":28.967,"across":6.073,"flatness":0.5292},{"sides":5,"end":false,"area":16.362,"across":4.564,"flatness":0.4087},{"sides":6,"end":false,"area":27.453,"across":5.912,"flatness":0.4601},{"sides":7,"end":false,"area":42.465,"across":7.353,"flatness":0.5952},{"sides":6,"end":false,"area":34.38,"across":6.616,"flatness":0.4829},{"sides":6,"end":false,"area":29.225,"across":6.1,"flatness":0.4503},{"sides":6,"end":false,"area":24.463,"across":5.581,"flatness":0.4347},{"sides":6,"end":false,"area":29.095,"across":6.086,"flatness":0.3966},{"sides":6,"end":false,"area":19.646,"across":5.001,"flatness":0.2584},{"sides":6,"end":false,"area":22.462,"across":5.348,"flatness":0.3322},{"sides":6,"end":false,"area":21.953,"across":5.287,"flatness":0.5086},{"sides":6,"end":false,"area":19.514,"across":4.985,"flatness":0.3796},{"sides":6,"end":false,"area":29.367,"across":6.115,"flatness":0.5039},{"sides":6,"end":false,"area":31.137,"across":6.296,"flatness":0.4554},{"sides":6,"end":false,"area":20.98,"across":5.168,"flatness":0.2867},{"sides":6,"end":false,"area":16.056,"across":4.521,"flatness":0.1768},{"sides":6,"end":false,"area":18.446,"across":4.846,"flatness":0.2918},{"sides":6,"end":false,"area":17.848,"across":4.767,"flatness":0.3436},{"sides":6,"end":false,"area":21.998,"across":5.292,"flatness":0.4386},{"sides":7,"end":false,"area":35.285,"across":6.703,"flatness":0.5043},{"sides":6,"end":false,"area":25.069,"across":5.65,"flatness":0.3525},{"sides":6,"end":false,"area":17.073,"across":4.662,"flatness":0.2377},{"sides":6,"end":false,"area":15.174,"across":4.395,"flatness":0.2007},{"sides":6,"end":false,"area":16.066,"across":4.523,"flatness":0.2532},{"sides":6,"end":false,"area":18.651,"across":4.873,"flatness":0.3745},{"sides":6,"end":false,"area":24.786,"across":5.618,"flatness":0.4987},{"sides":6,"end":false,"area":20.748,"across":5.14,"flatness":0.3045},{"sides":6,"end":false,"area":19.498,"across":4.983,"flatness":0.2362},{"sides":5,"end":false,"area":12.491,"across":3.988,"flatness":0.1918},{"sides":7,"end":false,"area":20.67,"across":5.13,"flatness":0.2412},{"sides":5,"end":false,"area":11.608,"across":3.844,"flatness":0.2591},{"sides":7,"end":false,"area":26.334,"across":5.79,"flatness":0.4424},{"sides":6,"end":false,"area":18.702,"across":4.88,"flatness":0.2899},{"sides":6,"end":false,"area":17.847,"across":4.767,"flatness":0.1918},{"sides":6,"end":false,"area":14.698,"across":4.326,"flatness":0.194},{"sides":6,"end":false,"area":13.899,"across":4.207,"flatness":0.1773},{"sides":6,"end":false,"area":15.888,"across":4.498,"flatness":0.1991},{"sides":6,"end":false,"area":18.836,"across":4.897,"flatness":0.2719},{"sides":6,"end":false,"area":22.118,"across":5.307,"flatness":0.4104},{"sides":6,"end":false,"area":14.342,"across":4.273,"flatness":0.2848},{"sides":7,"end":false,"area":15.822,"across":4.488,"flatness":0.242},{"sides":6,"end":false,"area":8.838,"across":3.354,"flatness":0.0604},{"sides":6,"end":false,"area":12.527,"across":3.994,"flatness":0.0757},{"sides":5,"end":false,"area":11.664,"across":3.854,"flatness":0.1402},{"sides":7,"end":false,"area":25.999,"across":5.753,"flatness":0.2429},{"sides":6,"end":false,"area":24.219,"across":5.553,"flatness":0.2963},{"sides":6,"end":false,"area":19.104,"across":4.932,"flatness":0.3519},{"sides":6,"end":false,"area":9.347,"across":3.45,"flatness":0.1119},{"sides":6,"end":false,"area":6.511,"across":2.879,"flatness":0.1494},{"sides":6,"end":false,"area":10.039,"across":3.575,"flatness":0.079},{"sides":7,"end":false,"area":16.484,"across":4.581,"flatness":0.1923},{"sides":6,"end":false,"area":16.323,"across":4.559,"flatness":0.233},{"sides":6,"end":false,"area":19.624,"across":4.999,"flatness":0.3012},{"sides":7,"end":false,"area":20.857,"across":5.153,"flatness":0.3525},{"sides":5,"end":false,"area":9.017,"across":3.388,"flatness":0.1672},{"sides":6,"end":false,"area":7.806,"across":3.153,"flatness":0.2134},{"sides":7,"end":false,"area":9.399,"across":3.459,"flatness":0.162},{"sides":6,"end":false,"area":7.916,"across":3.175,"flatness":0.2131},{"sides":6,"end":false,"area":10.103,"across":3.587,"flatness":0.2864},{"sides":6,"end":false,"area":11.258,"across":3.786,"flatness":0.3209},{"sides":5,"end":false,"area":9.884,"across":3.547,"flatness":0.2099},{"sides":7,"end":false,"area":15.246,"across":4.406,"flatness":0.3111},{"sides":6,"end":false,"area":8.449,"across":3.28,"flatness":0.2307},{"sides":5,"end":true,"area":0.447,"across":0.755,"flatness":0.1318},{"sides":7,"end":true,"area":5.813,"across":2.721,"flatness":0.4105},{"sides":6,"end":true,"area":3.872,"across":2.22,"flatness":0.3907},{"sides":6,"end":true,"area":2.109,"across":1.639,"flatness":0.3652},{"sides":6,"end":true,"area":1.649,"across":1.449,"flatness":0.3408},{"sides":7,"end":true,"area":5.493,"across":2.645,"flatness":0.322},{"sides":6,"end":false,"area":7.887,"across":3.169,"flatness":0.1515},{"sides":6,"end":false,"area":7.631,"across":3.117,"flatness":0.1359},{"sides":6,"end":false,"area":7.566,"across":3.104,"flatness":0.185},{"sides":6,"end":false,"area":6.868,"across":2.957,"flatness":0.0553},{"sides":5,"end":false,"area":7.21,"across":3.03,"flatness":0.1044},{"sides":6,"end":false,"area":17.488,"across":4.719,"flatness":0.176},{"sides":6,"end":false,"area":11.73,"across":3.865,"flatness":0.0861},{"sides":6,"end":false,"area":14.331,"across":4.272,"flatness":0.1748},{"sides":6,"end":false,"area":9.574,"across":3.491,"flatness":0.2462},{"sides":5,"end":false,"area":6.728,"across":2.927,"flatness":0.1045},{"sides":6,"end":false,"area":9.601,"across":3.496,"flatness":0.192},{"sides":5,"end":false,"area":11.407,"across":3.811,"flatness":0.2049},{"sides":5,"end":false,"area":10.926,"across":3.73,"flatness":0.1625},{"sides":7,"end":false,"area":12.57,"across":4.001,"flatness":0.2917},{"sides":5,"end":false,"area":7.914,"across":3.174,"flatness":0.1345},{"sides":6,"end":false,"area":11.967,"across":3.903,"flatness":0.1288},{"sides":6,"end":false,"area":7.111,"across":3.009,"flatness":0.0872},{"sides":6,"end":false,"area":7.886,"across":3.169,"flatness":0.0595},{"sides":6,"end":false,"area":8.967,"across":3.379,"flatness":0.1913},{"sides":5,"end":false,"area":6.588,"across":2.896,"flatness":0.1013},{"sides":5,"end":false,"area":8.859,"across":3.358,"flatness":0.1168},{"sides":7,"end":false,"area":16.601,"across":4.598,"flatness":0.1895},{"sides":6,"end":false,"area":13.359,"across":4.124,"flatness":0.1483},{"sides":6,"end":false,"area":14.318,"across":4.27,"flatness":0.1974},{"sides":6,"end":false,"area":12.978,"across":4.065,"flatness":0.1471},{"sides":7,"end":false,"area":22.338,"across":5.333,"flatness":0.2296},{"sides":5,"end":false,"area":11.089,"across":3.758,"flatness":0.2436},{"sides":6,"end":false,"area":8.861,"across":3.359,"flatness":0.2162},{"sides":5,"end":false,"area":11.385,"across":3.807,"flatness":0.1883},{"sides":5,"end":false,"area":5.476,"across":2.64,"flatness":0.1147},{"sides":5,"end":false,"area":5.216,"across":2.577,"flatness":0.096},{"sides":6,"end":false,"area":16.581,"across":4.595,"flatness":0.2536},{"sides":5,"end":false,"area":5.465,"across":2.638,"flatness":0.0793}],"metrics":{"sides":{"5":21,"6":95,"7":18},"interior_shapes":134,"end_shapes":13,"across_min":2.577123555513415,"across_mean":4.695194140230341,"across_max":7.888516274937392,"flatness_max":0.7415534234340766,"flatness_mean":0.2916907775840553,"min_edge":1.3736820049745504,"min_edge_end_shapes":0.3774327402520208,"non_convex":0,"pentagons_touching":0,"corner_off_surface_max":0.1493275047803635,"flatness_on_surface_max":0.8197563638175404,"flatness_on_surface_mean":0.31689761615133377}};
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const NAMES = { 5: "Pentagon", 6: "Hexagon", 7: "Heptagon" };
+const kind = p => p.end ? "end" : ({ 5: "pent", 6: "hex", 7: "hept" }[p.sides] || "hex");
+const m = L.metrics;
+
+document.getElementById("subtitle").textContent =
+  `Hexagons with pentagon/heptagon pairs · seed ${L.params.SEED}`;
+
+// legend with counts
+const counts = { pent: 0, hex: 0, hept: 0, end: 0 };
+L.polygon_info.forEach(p => counts[kind(p)]++);
+const legend = document.getElementById("legend-type");
+[["pent", "Pentagons"], ["hex", "Hexagons"], ["hept", "Heptagons"], ["end", "Cut at tube end"]].forEach(([k, t]) => {
+  legend.insertAdjacentHTML("beforeend",
+    `<span class="sw" style="background:var(--${k})"></span><span>${t}</span><span class="num">${counts[k]}</span>`);
+});
+const stats = [
+  ["Shapes", L.polygons.length],
+  ["Size across", `${m.across_min.toFixed(1)}–${m.across_max.toFixed(1)} in`],
+  ["Average size", `${m.across_mean.toFixed(1)} in`],
+  ["Out of flat, max", `${m.flatness_max.toFixed(2)} in`],
+  ["Shortest edge", `${m.min_edge.toFixed(2)} in`],
+  ["Pentagons touching", m.pentagons_touching],
+];
+document.getElementById("stats").innerHTML =
+  stats.map(([a, b]) => `<span>${a}</span><span class="num">${b}</span>`).join("");
+
+// ---- scene ----
+const stage = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.5, 2000);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.65);
+camera.add(sun); sun.position.set(30, 50, 40); scene.add(camera);
+
+// Tube runs along z in the file; turn it upright (z -> y).
+const V = L.vertices.map(([x, y, z]) => new THREE.Vector3(x, z, -y));
+const box = new THREE.Box3().setFromPoints(V);
+const centre = box.getCenter(new THREE.Vector3());
+const height = box.max.y - box.min.y;
+
+// One fan of triangles per panel, from its centre, so bowed panels still render.
+// Each panel is lit with its own average normal, so it reads as one piece of plastic.
+const pos = [], nrm = [], polyOf = [];
+L.polygons.forEach((poly, pi) => {
+  const c = new THREE.Vector3(), n = new THREE.Vector3();
+  poly.forEach(i => c.add(V[i])); c.divideScalar(poly.length);
+  poly.forEach((i, k) => {
+    const a = V[i].clone().sub(c), b = V[poly[(k + 1) % poly.length]].clone().sub(c);
+    n.add(a.cross(b));
+  });
+  n.normalize();
+  for (let k = 0; k < poly.length; k++) {
+    const a = V[poly[k]], b = V[poly[(k + 1) % poly.length]];
+    pos.push(c.x, c.y, c.z, a.x, a.y, a.z, b.x, b.y, b.z);
+    for (let j = 0; j < 3; j++) nrm.push(n.x, n.y, n.z);
+    polyOf.push(pi);
+  }
+});
+const geo = new THREE.BufferGeometry();
+geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+geo.setAttribute("normal", new THREE.Float32BufferAttribute(nrm, 3));
+geo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(pos.length), 3));
+const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+  vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0,
+  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+scene.add(mesh);
+
+// seams: each shared edge once
+const seen = new Set(), seg = [];
+L.polygons.forEach(poly => poly.forEach((a, k) => {
+  const b = poly[(k + 1) % poly.length], key = a < b ? a + "_" + b : b + "_" + a;
+  if (seen.has(key)) return; seen.add(key);
+  seg.push(V[a].x, V[a].y, V[a].z, V[b].x, V[b].y, V[b].z);
+}));
+const segGeo = new THREE.BufferGeometry();
+segGeo.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+const seams = new THREE.LineSegments(segGeo, new THREE.LineBasicMaterial({ color: css("--seam") }));
+scene.add(seams);
+
+// highlight outline for the picked panel
+const hiGeo = new THREE.BufferGeometry();
+const hi = new THREE.LineLoop(hiGeo, new THREE.LineBasicMaterial({ color: css("--accent"), depthTest: false }));
+hi.renderOrder = 2; hi.visible = false; scene.add(hi);
+
+// ---- colouring ----
+let mode = "type";
+const ramp = t => {   // teal -> yellow -> red
+  const s = [[0x2f, 0x9e, 0x8f], [0xe7, 0xd3, 0x6b], [0xd0, 0x45, 0x2f]];
+  t = Math.min(1, Math.max(0, t)) * 2; const i = Math.min(1, Math.floor(t)), f = t - i;
+  return new THREE.Color(...s[i].map((v, j) => (v + (s[i + 1][j] - v) * f) / 255));
+};
+function polyColour(p) {
+  if (mode === "flat") return ramp(p.flatness / m.flatness_max);
+  if (mode === "size") return ramp((p.across - m.across_min) / (m.across_max - m.across_min));
+  return new THREE.Color(css("--" + kind(p)));
+}
+function recolour() {
+  const col = geo.attributes.color.array;
+  const cache = L.polygon_info.map(polyColour);
+  polyOf.forEach((pi, t) => { const c = cache[pi]; for (let j = 0; j < 3; j++) col.set([c.r, c.g, c.b], (t * 3 + j) * 3); });
+  geo.attributes.color.needsUpdate = true;
+  document.getElementById("legend-type").hidden = mode !== "type";
+  document.getElementById("legend-ramp").hidden = mode === "type";
+  const lo = mode === "flat" ? "0 in (flat)" : m.across_min.toFixed(1) + " in";
+  const hiTxt = mode === "flat" ? m.flatness_max.toFixed(2) + " in" : m.across_max.toFixed(1) + " in";
+  document.getElementById("ramp-lo").textContent = lo;
+  document.getElementById("ramp-hi").textContent = hiTxt;
+}
+["type", "flat", "size"].forEach(k => document.getElementById("mode-" + k).onclick = () => {
+  mode = k;
+  ["type", "flat", "size"].forEach(j => document.getElementById("mode-" + j).setAttribute("aria-pressed", j === k));
+  recolour();
+});
+recolour();
+
+// ---- camera ----
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+function resetView() {
+  // back off far enough that the whole tube fits the window
+  const fit = height * 0.6 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const dist = fit * Math.max(1, 0.45 / camera.aspect);
+  const dir = new THREE.Vector3(1, 0.12, 0.7).normalize();
+  controls.target.copy(centre);
+  camera.position.copy(centre).addScaledVector(dir, dist);
+  controls.update();
+}
+document.getElementById("reset").onclick = resetView;
+document.getElementById("opt-seams").onchange = e => seams.visible = e.target.checked;
+const spin = document.getElementById("opt-spin");
+spin.onchange = () => controls.autoRotate = spin.checked;
+controls.autoRotateSpeed = 1.5;
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) controls.enableDamping = false;
+
+// ---- picking ----
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), pick = document.getElementById("pick");
+let down = null;
+renderer.domElement.addEventListener("pointerdown", e => down = [e.clientX, e.clientY]);
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(mesh)[0];
+  if (!hit) { hi.visible = false; pick.hidden = true; return; }
+  const pi = polyOf[hit.faceIndex], p = L.polygon_info[pi];
+  hiGeo.setFromPoints(L.polygons[pi].map(i => V[i])); hi.visible = true;
+  pick.hidden = false;
+  pick.innerHTML = `<div class="label">Panel ${pi + 1}</div><div class="stats">
+    <span>Shape</span><span class="num">${NAMES[p.sides] || p.sides + " sides"}${p.end ? ", cut" : ""}</span>
+    <span>Size across</span><span class="num">${p.across.toFixed(2)} in</span>
+    <span>Area</span><span class="num">${p.area.toFixed(1)} sq in</span>
+    <span>Out of flat</span><span class="num">${p.flatness.toFixed(2)} in</span></div>`;
+});
+
+// ---- panel collapse on phones ----
+const info = document.getElementById("info"), tg = document.getElementById("toggle");
+tg.onclick = () => { const c = info.classList.toggle("collapsed"); tg.textContent = c ? "Show" : "Hide"; tg.setAttribute("aria-expanded", !c); };
+if (innerWidth <= 560) tg.click();
+
+// theme changes
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  seams.material.color.set(css("--seam")); hi.material.color.set(css("--accent")); recolour(); });
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize(); resetView();
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script>

@@ -2,3 +2,4 @@
 onshape-keys.env
 .env
 .DS_Store
+__pycache__/

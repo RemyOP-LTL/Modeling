@@ -9,6 +9,8 @@ One of three layout experiments for the coral skin. This one starts from a honey
 | `preview_3d.png` | The skin on the test tube, from three angles. |
 | `preview_closeup.png` | A close-up of the middle of the tube. |
 | `preview_unrolled.png` | The tube cut open along one side and laid flat. |
+| `viewer.html` | **3D viewer.** Double-click it to open it in your web browser, then drag to spin it around. Needs internet the first time (it loads the 3D library). |
+| `make_viewer.py`, `viewer_template.html` | Build `viewer.html` from `layout.json`. The main script does this for you. |
 
 Colours: **orange = pentagon**, **sand = hexagon**, **blue = heptagon**, **green = shape cut off by the open tube end**.
 
@@ -28,7 +30,7 @@ Then, from this folder:
 python3 hex57_layout.py
 ```
 
-The script overwrites `layout.json` and the three PNGs, then prints the measurements.
+The script overwrites `layout.json`, the three PNGs and `viewer.html`, then prints the measurements.
 
 ## Results with the default settings (seed 7)
 
