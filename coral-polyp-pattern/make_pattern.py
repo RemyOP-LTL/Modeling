@@ -1,75 +1,95 @@
-"""Sewing pattern for a fabric coral polyp: six "glove thumbs" around a round cuff
-that slides over the end of a 5 in tube. Two ways to sew it:
+"""Sewing pattern for a fabric coral polyp: six fingers around a round cuff that
+slides over the end of a 5 in tube.
 
-  Version A: each thumb has an OUTER and an INNER half (seam runs up the
-             sides of the thumb). Pieces A1 and A2, cut 6 of each.
-  Version B: each thumb has a LEFT and a RIGHT half (seam runs from the centre
-             of the top, out over the tip of the thumb and down the cuff).
-             One piece, cut 12 (6 pairs).
+Each finger is two mirror-image halves, so the seam runs from the centre of the top,
+out over the fingertip and down the cuff. One piece, cut 12 (6 pairs).
 
-Run:  python3 make_pattern.py
-Makes: pattern-version-a.pdf, pattern-version-b.pdf (print at 100 %),
-       pattern-preview.png, polyp-version-a.png, polyp-version-b.png
+Run:  python3 make_pattern.py          (add --no-sim to skip the 3D simulation)
+Makes: pattern.pdf (print at 100 %), pattern-preview.png, polyp.png
 
 All sizes are in inches. Change the numbers in SETTINGS and run again.
 """
 import math
+import sys
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+from scipy.interpolate import PchipInterpolator
 from shapely.geometry import Polygon
-
-from render_polyp import Polyp, save_preview
 
 # ---------------- SETTINGS ----------------
 TUBE_DIAMETER = 5.0     # the tube the polyp slides over
 EASE = 0.5              # extra room around the tube so it slides on (woven fabric)
-THUMBS = 6              # number of thumbs
+FINGERS = 6             # number of fingers
 CUFF_HEIGHT = 3.0       # finished height of the round "wrist" part
-THUMB_LENGTH = 4.0      # finished height of each thumb, from crotch to tip
-THUMB_BULGE = 0.35      # how much wider the thumb gets above its base (total)
+FINGER_LENGTH = 4.0     # length of a finger on the flat piece, crotch to tip
+NECK_WIDTH = 1.9        # flat piece width at the narrowest part, low on the finger
+BULB_WIDTH = 2.9        # flat piece width at the bulb near the end
+SPLAY = 50              # degrees the fingers lean out low down; they curve back to vertical at the tip
 SEAM = 3 / 8            # seam allowance on every sewn edge
 HEM = 1.0               # extra at the wrist edge, folded up for a hem
-SPLAY = 45              # version B: degrees each finger tip leans out from straight up
 # ------------------------------------------
 
+THUMBS = FINGERS
+THUMB_LENGTH = FINGER_LENGTH
 CIRC = math.pi * TUBE_DIAMETER + EASE        # finished cuff circumference
-W0 = CIRC / THUMBS                           # finished width of one thumb piece at the crotch
-WM = W0 + THUMB_BULGE                        # widest part of a thumb piece
-TIP_H = WM / 2 * 1.15                        # height of the rounded tip
-BODY_H = THUMB_LENGTH - TIP_H                # straight-ish part below the tip
-TRI_DEPTH = (W0 / 2) / math.tan(math.pi / THUMBS)   # crotch line to centre of the top
+W0 = CIRC / FINGERS                          # finished width of one piece at the crotch
+TRI_DEPTH = (W0 / 2) / math.tan(math.pi / FINGERS)   # crotch line to centre of the top
+TIP_START = 0.78                             # fraction of the length where the tip starts rounding off
+
+_profile = PchipInterpolator(
+    [0.0, 0.12, 0.30, 0.45, 0.70, 0.86, 1.0],
+    [W0 / 2, (W0 / 2 + NECK_WIDTH / 2) / 2 + 0.05, NECK_WIDTH / 2, NECK_WIDTH / 2 * 1.04,
+     BULB_WIDTH / 2, BULB_WIDTH / 2 * 0.96, BULB_WIDTH / 2 * 0.85])
 
 
-def thumb_outline(n=120):
-    """Finished (sewing) line of a thumb piece, left base corner, up, over the tip,
+def finger_half_width(s):
+    """Half the flat width of the finger at distance s above the crotch."""
+    s = np.asarray(s, float)
+    u = np.clip(s / FINGER_LENGTH, 0, 1)
+    h = _profile(u)
+    t = np.clip((u - TIP_START) / (1 - TIP_START), 0, 1)
+    return h * np.sqrt(np.clip(1 - t ** 2, 0, 1))
+
+
+def thumb_outline(n=240):
+    """Finished (sewing) line of the finger, left base corner, up, over the tip,
     down to the right base corner. y = 0 at the crotch level."""
-    ys = np.linspace(0, BODY_H, n)
-    half = W0 / 2 + (WM - W0) / 2 * np.sin(np.pi / 2 * ys / BODY_H)
-    left = np.column_stack([-half, ys])
-    t = np.linspace(math.pi, 0, n)
-    tip = np.column_stack([WM / 2 * np.cos(t), BODY_H + TIP_H * np.sin(t)])
-    right = np.column_stack([half[::-1], ys[::-1]])
-    return np.vstack([left, tip[1:-1], right])
+    u = np.linspace(0, 1, n)
+    s = FINGER_LENGTH * (1 - (1 - u) ** 1.6)          # closer points near the tip
+    h = finger_half_width(s)
+    left = np.column_stack([-h, s])
+    right = np.column_stack([h[::-1], s[::-1]])
+    return np.vstack([left, right[1:]])
+
+
+def _bend_angle(s):
+    """3D lean of the finger centre line away from vertical (radians), at distance s.
+    Zero at the base, SPLAY halfway up, back to zero at the tip."""
+    u = np.clip(np.asarray(s, float) / FINGER_LENGTH, 0, 1)
+    return math.radians(SPLAY) * np.sin(np.pi * u)
 
 
 def bend(pts):
-    """Version B: curve the finger part of the piece (y > 0) like a banana. The inside
-    edge (right, x > 0, the side facing the centre of the polyp) comes out longer than
-    the outside edge (left), so when sewn the finger curves outward by SPLAY degrees
-    over its straight part."""
-    if SPLAY <= 0:
+    """Curve the finger part of the piece (y > 0). Where the inside edge (right, the side
+    facing the centre of the polyp) is longer than the outside edge, the sewn finger
+    turns outward; where it is shorter, the finger turns back up.
+    A half-tube bent by angle a in 3D needs the flat piece bent by 2a/pi."""
+    if SPLAY == 0:
         return pts
-    kappa = math.radians(SPLAY) / BODY_H     # bend of the finger's centre line in 3D
-    rho = math.pi / (2 * kappa)              # matching bend radius of the flat piece
+    grid = np.linspace(0, FINGER_LENGTH, 2001)
+    phi = 2 / math.pi * _bend_angle(grid)
+    ds = np.diff(grid)
+    tx, ty = -np.sin(phi), np.cos(phi)
+    cx = np.concatenate([[0], np.cumsum((tx[1:] + tx[:-1]) / 2 * ds)])
+    cy = np.concatenate([[0], np.cumsum((ty[1:] + ty[:-1]) / 2 * ds)])
     x, y = pts[:, 0], pts[:, 1]
-    phi = np.clip(y, 0, BODY_H) / rho
-    extra = np.clip(y - BODY_H, 0, None)     # the rounded tip stays straight
-    r = rho + x
-    bx = -rho + r * np.cos(phi) - extra * np.sin(phi)
-    by = r * np.sin(phi) + extra * np.cos(phi)
+    yy = np.clip(y, 0, FINGER_LENGTH)
+    p = np.interp(yy, grid, phi)
+    bx = np.interp(yy, grid, cx) + x * np.cos(p)
+    by = np.interp(yy, grid, cy) + x * np.sin(p)
     return np.where((y > 0)[:, None], np.column_stack([bx, by]), pts)
 
 
@@ -78,17 +98,7 @@ def close(*parts):
     return np.vstack([p, p[:1]])
 
 
-# Each piece function returns the sewing line. `extra` lengthens the cuff for the hem.
-def piece_a1(extra=0.0):
-    """Version A outer half: thumb on a strip of cuff."""
-    return close(thumb_outline(), [(W0 / 2, -CUFF_HEIGHT - extra), (-W0 / 2, -CUFF_HEIGHT - extra)])
-
-
-def piece_a2(extra=0.0):
-    """Version A inner half: thumb on a triangle that reaches the centre of the top."""
-    return close(thumb_outline(), [(0, -TRI_DEPTH)])
-
-
+# The piece function returns the sewing line. `extra` lengthens the cuff for the hem.
 def piece_b(extra=0.0):
     """Version B half thumb. Left of the middle: a strip of cuff. Right of the
     middle: half a triangle reaching the centre. The V between them starts at the crotch."""
@@ -118,7 +128,7 @@ def text_block(ax, x, y, lines, size=7.5):
 def draw_piece(ax, sew, cut, notches, grain_x=0.0, grain_y=None, slash=None):
     ax.plot(cut[:, 0], cut[:, 1], "k-", lw=1.4)
     ax.plot(sew[:, 0], sew[:, 1], "k--", lw=0.7)
-    y0, y1 = grain_y or (BODY_H * 0.1 - 1.0, BODY_H * 0.9)
+    y0, y1 = grain_y
     ax.annotate("", xy=(grain_x, y1), xytext=(grain_x, y0), arrowprops=dict(arrowstyle="<->", lw=0.8))
     ax.text(grain_x + 0.08, (y0 + y1) / 2, "grain", rotation=90, fontsize=7, va="center")
     if slash is not None:
@@ -139,7 +149,7 @@ def page(pdf, sew, cut, notches, title, lines, footer, grain_x=0.0, grain_y=None
     ax.set_aspect("equal")
     ax.axis("off")
     draw_piece(ax, sew, cut, notches, grain_x, grain_y, slash)
-    ax.text(0, BODY_H + TIP_H + SEAM + 0.25, title, ha="center", fontsize=12, weight="bold")
+    ax.text(0, top - 0.5, title, ha="center", fontsize=12, weight="bold")
     text_block(ax, text_xy[0], text_xy[1], lines)
     ax.add_patch(plt.Rectangle((-3.75, top - 1.6), 1, 1, fill=False, lw=1))
     ax.text(-3.25, top - 1.1, "1 in\ntest\nsquare", ha="center", va="center", fontsize=6.5)
@@ -155,57 +165,36 @@ def main():
     foot = (f'Solid line = cut.  Dashed line = sew.  Seam allowance {sa} included.  '
             f'Cuff circumference {CIRC:.2f}" for a {TUBE_DIAMETER:g}" tube ({EASE:g}" ease).')
     side_notches = [(-W0 / 2 - SEAM, 0, "<"), (W0 / 2 + SEAM, 0, ">")]
-
-    a1, a1_cut = piece_a1(), cut_line(piece_a1, True)
-    a2, a2_cut = piece_a2(), cut_line(piece_a2, False)
     b, b_cut = piece_b(), cut_line(piece_b, True)
+    slash = v_slash(b_cut)
+    lines = [f"Cut {2 * FINGERS}", f"({FINGERS} pairs: fold fabric", "in two and cut 6)", "",
+             "Left edge + tip + right edge", "+ triangle's straight edge", "= seam to its twin",
+             "", "Both sides of the V", "= seams to the", "neighbouring finger"]
+    with PdfPages("pattern.pdf") as pdf:
+        page(pdf, b, b_cut, side_notches, "FINGER HALF", lines, foot, grain_x=-0.7,
+             grain_y=(-2.6, 0.7), text_xy=tuple(bend(np.array([[0.0, 0.62 * FINGER_LENGTH]]))[0]),
+             slash=slash)
 
-    with PdfPages("pattern-version-a.pdf") as pdf:
-        page(pdf, a1, a1_cut, side_notches, "A1  OUTER HALF  (version A)",
-             [f"Cut {THUMBS}", "", "THUMB above the notches", "CUFF below",
-              "", f'{HEM:g}" hem allowance', "at bottom edge"], foot)
-        page(pdf, a2, a2_cut, side_notches, "A2  INNER HALF  (version A)",
-             [f"Cut {THUMBS}", "", "point goes to the", "centre of the top"], foot)
-    with PdfPages("pattern-version-b.pdf") as pdf:
-        page(pdf, b, b_cut, side_notches, "B  THUMB HALF  (version B)",
-             [f"Cut {2 * THUMBS}", f"({THUMBS} pairs: fold fabric", "in two and cut 6)", "",
-              "Left edge + tip + right edge", "+ triangle's straight edge", "= seam to its twin",
-              "", "Both sides of the V", "= seams to the", "neighbouring thumb"],
-             foot, grain_x=-0.7, grain_y=(-2.6, 0.7), text_xy=tuple(bend(np.array([[0.0, 2.5]]))[0]), slash=v_slash(b_cut))
-
-    # overview image of all pieces
-    fig, axes = plt.subplots(1, 3, figsize=(11, 6.5))
-    for ax, sew, cut, t in [(axes[0], a1, a1_cut, f"A1 outer half - cut {THUMBS}"),
-                            (axes[1], a2, a2_cut, f"A2 inner half - cut {THUMBS}"),
-                            (axes[2], b, b_cut, f"B thumb half - cut {2 * THUMBS}")]:
-        ax.plot(cut[:, 0], cut[:, 1], "k-", lw=1.4)
-        ax.plot(sew[:, 0], sew[:, 1], "k--", lw=0.7)
-        if sew is b:
-            sl = v_slash(cut)
-            ax.plot(sl[:, 0], sl[:, 1], "k-", lw=1.4)
-            ax.plot([0], [0], "ko", ms=4)
-        ax.set_aspect("equal"); ax.set_title(t, fontsize=10)
-        ax.set_xlim(-3.5, 2.5); ax.set_ylim(-CUFF_HEIGHT - HEM - 0.6, THUMB_LENGTH + 0.8)
-        ax.grid(alpha=0.3); ax.set_xticks(range(-3, 3)); ax.set_yticks(range(-4, 6))
-        ax.set_xlabel("inches")
-    axes[0].text(-2.4, -CUFF_HEIGHT - HEM - 0.45, "Version A", fontsize=11, weight="bold")
-    axes[2].text(-2.4, -CUFF_HEIGHT - HEM - 0.45, "Version B", fontsize=11, weight="bold")
-    fig.suptitle("Solid = cut line, dashed = sewing line. Print the PDFs for true size.")
+    fig, ax = plt.subplots(figsize=(5, 7))
+    ax.plot(b_cut[:, 0], b_cut[:, 1], "k-", lw=1.4)
+    ax.plot(b[:, 0], b[:, 1], "k--", lw=0.7)
+    ax.plot(slash[:, 0], slash[:, 1], "k-", lw=1.4)
+    ax.plot([0], [0], "ko", ms=4)
+    ax.set_aspect("equal")
+    ax.set_title(f"Finger half - cut {2 * FINGERS}\nSolid = cut line, dashed = sewing line", fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.set_xticks(range(-4, 4)); ax.set_yticks(range(-5, 7))
+    ax.set_xlabel("inches")
     fig.savefig("pattern-preview.png", dpi=110, bbox_inches="tight")
     plt.close(fig)
 
-    polyp = Polyp(cuff_radius=CIRC / (2 * math.pi), cuff_height=CUFF_HEIGHT, thumbs=THUMBS,
-                  r_base=W0 / math.pi, r_top=WM / math.pi, thumb_length=THUMB_LENGTH,
-                  tube_radius=TUBE_DIAMETER / 2)
-    save_preview(polyp, "A", "Version A: thumbs in outer + inner halves", "polyp-version-a.png")
-    print("simulating version B (takes a few minutes)...")
-    from sim_polyp import make_preview
-    make_preview("polyp-version-b.png",
-                 f"Version B, simulated from the flat pieces (fingers spread {SPLAY:g}\u00b0)")
+    if "--no-sim" not in sys.argv:
+        print("simulating the sewn polyp (takes a few minutes)...")
+        from sim_polyp import make_preview
+        make_preview("polyp.png", f"Simulated from the flat pattern (fingers lean out up to {SPLAY:g}\u00b0)")
 
-    print(f"cuff circumference {CIRC:.3f}  piece width at crotch {W0:.3f}  widest {WM:.3f}")
-    for name, c in [("A1", a1_cut), ("A2", a2_cut), ("B", b_cut)]:
-        print(f"{name} cut size {np.ptp(c[:, 0]):.2f} x {np.ptp(c[:, 1]):.2f}")
+    print(f"cuff circumference {CIRC:.3f}  piece width at crotch {W0:.3f}")
+    print(f"cut size {np.ptp(b_cut[:, 0]):.2f} x {np.ptp(b_cut[:, 1]):.2f}")
 
 
 if __name__ == "__main__":

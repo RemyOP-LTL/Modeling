@@ -96,13 +96,11 @@ def _embed(uv, k, side):
     # finger: half a tube around its axis
     m = v >= 0
     vv = v[m]
-    hw = np.where(vv < P.BODY_H,
-                  P.W0 / 2 + (P.WM - P.W0) / 2 * np.sin(np.pi / 2 * np.minimum(vv, P.BODY_H) / P.BODY_H),
-                  P.WM / 2 * np.sqrt(np.clip(1 - ((vv - P.BODY_H) / P.TIP_H) ** 2, 0, 1)))
+    hw = P.finger_half_width(vv)
     hw = np.maximum(hw, 1e-3)
     psi = np.pi * np.clip((u[m] + hw) / (2 * hw), 0, 1)
     rr = 2 * hw / math.pi
-    c = (R - r0) * e[None, :] + np.outer(np.minimum(vv, P.BODY_H + P.TIP_H * 0.6), [0, 0, 1])
+    c = (R - r0) * e[None, :] + np.outer(np.minimum(vv, 0.9 * P.FINGER_LENGTH), [0, 0, 1])
     out[m] = c + rr[:, None] * (np.outer(np.cos(psi), e) + side * np.outer(np.sin(psi), t))
     return out
 

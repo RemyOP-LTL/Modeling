@@ -1,95 +1,91 @@
 # Coral polyp sewing pattern
 
-A fabric polyp shaped like six glove thumbs joined at the base. The bottom is a round "wrist" (cuff) that slides over the end of a **5 in tube**.
+A fabric coral polyp made of **six fingers** around a round "wrist" (cuff) that slides over the end of a **5 in tube**.
 
-There are two ways to sew it. They look the same when finished. Only the seams are in different places.
+Remy chose **version B**. Each finger is two mirror-image halves, so the seam runs from the centre of the top, out over the fingertip, and down the cuff. There is one pattern piece, and you cut 12 of it (6 pairs). An earlier version A (outer + inner halves) was dropped. It's still in the git history.
 
-| Version A: outer + inner halves | Version B: left + right halves |
-|---|---|
-| ![Version A](polyp-version-a.png) | ![Version B](polyp-version-b.png) |
-| The seam runs up both sides of each thumb. | The seam runs from the centre of the top, out over the tip of the thumb, and down the cuff. |
-| 2 pattern pieces, cut 6 of each. | 1 pattern piece, cut 12. |
+> **Status (2026-10-26): finger shape change in progress, not finished.** See [Where things stand](#where-things-stand) before you continue.
 
 ## Files
 
-- **pattern-version-a.pdf** and **pattern-version-b.pdf**: the pattern pieces at true size, one per page. Print at **100 % / "Actual size"** (not "Fit to page") and check the 1 in test square with a ruler.
-- **pattern-preview.png**: all the pieces side by side, for a quick look.
-- **polyp-version-b.png**: version B as the flat pieces actually come out when sewn, from a cloth simulation (see below).
-- **polyp-version-a.png**: an idealised picture of version A with the seams drawn on. It isn't simulated.
-- **make_pattern.py**: the script that draws everything. **sim_polyp.py** does the version B simulation, and **render_polyp.py** draws the version A picture. Change the numbers at the top of `make_pattern.py` and run `python3 make_pattern.py` to remake the files. The simulation takes a few minutes.
+- **pattern.pdf**: the pattern piece at true size, with the *current, unfinished* finger shape. Print at **100 % / "Actual size"** and check the 1 in test square.
+- **pattern-preview.png**: the same piece as a quick picture.
+- **polyp-work-in-progress.png**: a simulation of the current pattern. It shows the problems listed below.
+- **previous-outward-curve/**: the last version Remy saw and liked (fingers straight up at the base, curving outward), with its pattern and simulated picture. The code for it is in commit `e02c3d8`.
+- **make_pattern.py**: draws the pattern. Settings are at the top. Run `python3 make_pattern.py` to remake everything, including the simulation (a few minutes), or add `--no-sim` to skip the simulation.
+- **sim_polyp.py**: the cloth simulation that turns the flat pieces into the 3D picture.
 
-## The sizes (both versions)
+The scripts need `numpy`, `scipy`, `matplotlib` and `shapely` (`pip3 install numpy scipy matplotlib shapely`).
 
-| | Finished size |
-|---|---|
-| Tube | 5 in across (15.71 in around) |
-| Cuff (wrist) | 16.21 in around, so 0.5 in of ease to slide on, and 3 in tall |
-| Thumbs (fingers) | 6 of them, 4 in long on the flat piece (about 3.2 in tall once sewn and puffed out), about 1.7 in across at the base and 1.9 in at the widest |
-| Seam allowance | **3/8 in**, already added to every edge |
-| Hem | 1 in extra at the bottom of the cuff, already added |
+## Sizes and settings
 
-Each piece is about 3.8 in wide and 7.5 to 8.4 in tall.
+| Setting | Value | Meaning |
+|---|---|---|
+| `TUBE_DIAMETER` | 5.0 in | the tube (15.71 in around) |
+| `EASE` | 0.5 in | extra room in the cuff so it slides on (woven fabric). Use about -0.5 for stretchy fabric. |
+| `FINGERS` | 6 | number of fingers |
+| `CUFF_HEIGHT` | 3.0 in | finished height of the wrist |
+| `FINGER_LENGTH` | 4.0 in | finger length on the flat piece. Sewn and puffed out, it comes out shorter (about 3 to 3.2 in). |
+| `NECK_WIDTH` | 1.9 in | flat width at the narrow part low on the finger (about 1.2 in across when sewn) |
+| `BULB_WIDTH` | 2.9 in | flat width at the bulb near the end (about 1.8 in across when sewn) |
+| `SPLAY` | 50° | how far the fingers lean out partway up. They curve back to vertical at the tip. |
+| `SEAM` | 3/8 in | seam allowance, already added to every edge |
+| `HEM` | 1.0 in | extra at the bottom of the cuff for the hem |
 
-The 0.5 in of ease is for fabric that doesn't stretch. For stretchy fabric (fleece, jersey, spandex), set `EASE = -0.5` so it grips the tube.
+The cuff comes out 16.21 in around. At the crotch (where a finger starts), each piece is 2.70 in wide, because six fingers have to fill the cuff's circumference.
 
-The small triangles on the edges of each piece are **notches**. They mark the "crotch", the point where the thumb starts. Snip a tiny cut there (no deeper than 1/4 in) so you can find it on the fabric.
+## How to sew it
 
 Sew with the right (good) sides of the fabric facing each other, on the dashed line, 3/8 in in from the edge.
 
-## Version A: how to sew it
+- **Cut 12.** Fold the fabric in half, right sides together, and cut 6. Each cut gives a mirror-image pair: the left and right halves of one finger.
+- **Notches** (small triangles on the edges) mark the crotch. Snip no deeper than 1/4 in.
+- **Slash to the dot.** The piece has a narrow V coming up from the bottom. The seam allowances fill the top of the V, so the cut line stops short. Cut along the solid line up to the dot, and stop right at the dot. The dot is the crotch.
 
-- **A1, outer half (cut 6):** a thumb on top of a strip of cuff.
-- **A2, inner half (cut 6):** a thumb on top of a triangle. The six triangle points meet in the middle of the top, like the panels on a baseball cap.
+1. **Make the fingers.** Pin a pair together. Sew one continuous seam: from the bottom of the cuff strip, up the long side, over the tip, down the other side, and down the straight edge of the triangle to its point. Clip into the seam allowance around curves. Do this 6 times.
+2. **Join the fingers.** The V edges of neighbouring halves are the seams between fingers. Sew the cuff edges from the dot down to the bottom edge, then the triangle edges from the dot to the point. Go around until all 6 are joined.
+3. **Check the middle.** All 12 triangle points meet at the centre of the top. Hand-stitch any small hole closed.
+4. **Hem.** Fold the bottom edge up 1/4 in, then up 3/4 in, and stitch.
+5. **Turn it right side out** through the wrist and push the fingers out.
 
-1. **Make the thumbs.** Pin one A1 to one A2 along the thumb edge, notch to notch. Sew from one notch, up and over the rounded tip, and down to the other notch. Stop exactly at the notch and backstitch. Do this 6 times. Clip into the seam allowance around the tip so it turns smoothly.
-2. **Make the top.** Sew the triangle edge of one A2 to the triangle edge of the next A2, from the notch to the point. Keep going around until all six triangles are joined and the points meet in the middle.
-3. **Close the cuff.** Sew the long straight side of each A1 to the next A1, from the notch down to the bottom edge. This closes the wrist into a tube.
-4. **Hem** and **turn** (see the end).
+## How the pattern shapes the fingers
 
-## Version B: how to sew it
+- **Width.** The flat piece is half the finger's circumference, so a sewn finger is about (2 × flat width) / π across.
+- **Curve.** A finger curves when one sewn edge is longer than the other. The seam runs in the same plane as the curve. If the inside edge (facing the centre of the polyp) is longer, the finger turns outward. If the outside edge is longer, it turns back in. To bend the sewn finger by an angle *a*, the flat piece is bent by 2*a*/π. `bend()` in `make_pattern.py` does this along the finger, following the angle profile in `_bend_angle()`.
 
-Version B's fingers spread outward. The finger part of the piece is curved like a banana: the edge that faces the centre of the polyp is longer than the edge that faces outward, so the sewn finger curves outward. `SPLAY = 45` (degrees) sets how much. Use 0 for straight fingers.
+## How the 3D picture is made (sim_polyp.py)
 
-- **B, thumb half (cut 12).** Fold the fabric in half, right sides together, and cut 6. Each cut gives you a pair that are mirror images of each other: one is the left half of a thumb and the other is the right half.
-
-The piece has a narrow V cut up into it from the bottom. The seam allowances fill the top of the V, so the cut line stops short. **Slash** (cut) along the solid line from the bottom of the V up to the dot, and stop right at the dot. The dot is the crotch.
-
-1. **Make the thumbs.** Take a pair and pin them together. Sew one continuous seam: start at the bottom of the cuff strip, go up the long side, over the rounded tip, down the other side, and keep going down the straight edge of the triangle to its point. Do this 6 times. Clip into the seam allowance around the tip so it turns smoothly. Each thumb now has a seam right down its middle, from the wrist, over the tip, to the centre of the top.
-2. **Join the thumbs.** Put two thumbs next to each other. The V edges of the touching halves are the seams between them. Sew the cuff edges together from the dot down to the bottom edge. Then sew the triangle edges together from the dot to the point. Go around until all 6 thumbs are joined into a ring.
-3. **Check the middle.** All 12 triangle points meet at the centre of the top. If there's a small hole there, stitch it closed by hand.
-4. **Hem** and **turn** (below).
-
-## How the version B picture is made
-
-`sim_polyp.py` works from the real pattern, not from a drawing of the finished shape:
+This works from the actual pattern, not from a drawing of the finished shape:
 
 1. It fills each of the 12 flat pieces with small triangles, about 1/8 in across.
 2. It stitches matching seam edges together point by point.
-3. It finds the resting shape. Fabric can't stretch, it bunches up easily, a gentle inside pressure puffs it out as if lightly stuffed, and the tube pushes back from inside. Each piece has a little stiffness of its own, but nothing holds the surface smooth across a seam. That's why ridges and changes of curvature show up at the seams.
+3. It finds the resting shape by minimising energy (scipy L-BFGS). Fabric can't stretch but bunches easily, a gentle inside pressure puffs it out as if lightly stuffed, the tube pushes back from inside, and the hem stays at the bottom. Each piece has a little stiffness of its own, and there is none across seams, so ridges and curvature breaks form at the seams.
 
-What it shows: the stitched fingers puff into rounded sausages and come out about 3.2 in tall, not the 4 in of the flat piece. The rounded tip of the flat piece sews into a slight point.
+What it leaves out: gravity, fabric thickness, seam-allowance bulk, and the fingers pushing on each other (they can overlap a little).
 
-What it leaves out: gravity, how thick the fabric is, seam-allowance bulk, and the fingers pressing on each other (they can overlap a little in the simulation). Real fabric will also wrinkle more finely than the triangles can show.
+## Where things stand
 
-## Both versions: finishing
+**Remy's latest requests (2026-10-26):**
 
-- **Hem.** Fold the bottom edge up 1/4 in, then up another 3/4 in, and stitch it down.
-- **Turn it right side out** through the wrist, and push the thumbs out with a chopstick or pencil eraser.
+1. Reverse the curve. The fingers should **arc out from the centre near the base and curve back toward vertical** at the tip. The previous version was the opposite: vertical at the base, curving outward.
+2. Make the fingers **narrower near the bottom with a gentle bulb near the end**, but **not phallic**.
 
-At each crotch several seams meet. Line them up exactly at the notch or dot so each crotch is a neat point with no hole.
+**What's in the code now:**
 
-The pictures show the polyp filled out (stuffed or with a little body). Thin fabric left empty will droop more.
+- `_bend_angle()`: the 3D lean is 0 at the base, peaks at `SPLAY` halfway up, and returns to 0 at the tip (a sine curve). A first try peaked a third of the way up, but the flat piece's outside edge folded over itself near the base, because the curve was too sharp for that width.
+- `finger_half_width()`: a smooth profile through set points. It narrows from 2.70 in at the crotch to the neck at 30 % of the length, flares to the bulb at 70 %, and rounds off from 78 %.
 
-## Changing it
+**What the simulation shows** (`polyp-work-in-progress.png`):
 
-The settings at the top of `make_pattern.py`:
+- The fingers come out stubby, about 3 in tall.
+- The fabric crumples at the "shoulders", where the 2.70 in crotch narrows to the 1.9 in neck.
+- The fingers **don't lean out**. The tips sit about 1.9 in from the centre, while the finger bases are about 1.7 in from the centre. So the S-curve isn't taking effect. The likely reason is that a puffed-out fabric tube can take up the extra length on one side by wrinkling, instead of bending.
 
-- `TUBE_DIAMETER = 5.0`: the tube size.
-- `EASE = 0.5`: extra room so it slides on.
-- `THUMBS = 6`: use 5 for five fatter thumbs.
-- `CUFF_HEIGHT = 3.0` and `THUMB_LENGTH = 4.0`.
-- `THUMB_BULGE = 0.35`: how much the thumbs swell above the base.
-- `SEAM = 3/8` and `HEM = 1.0`.
-- `SPLAY = 45`: how far the version B fingers spread out, in degrees.
+**Ideas for next steps:**
 
-The script needs `numpy`, `scipy`, `matplotlib` and `shapely` (`pip3 install numpy scipy matplotlib shapely`).
+- Separate the two changes. Simulate the curve with no neck (`NECK_WIDTH` = 2.7), and the neck/bulb with no curve (`SPLAY` = 0), to see which one causes what. These runs were started but not finished.
+- Get the outward lean at the base from the base shape rather than a smooth bend. For example, shorten the outside edge sharply right above the crotch, or change how the floor triangle meets the finger. Then curve back to vertical, as the earlier banana curve did successfully.
+- Make the narrowing gentler, or start it higher, so the shoulders don't crumple.
+- Make `FINGER_LENGTH` longer to make up for the shortening from puffing out.
+- Keep the bulb organic: a long, gradual flare like a bud or club, with no sudden "neck then head" step.
+- For quick tests, set `sim_polyp.H_STEP = 0.16` and use about 3000 iterations. The full settings (0.13 and 6000 iterations) take about 3 minutes.
