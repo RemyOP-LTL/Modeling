@@ -100,8 +100,19 @@ def _embed(uv, k, side):
     hw = np.maximum(hw, 1e-3)
     psi = np.pi * np.clip((u[m] + hw) / (2 * hw), 0, 1)
     rr = 2 * hw / math.pi
-    c = (R - r0) * e[None, :] + np.outer(np.minimum(vv, 0.9 * P.FINGER_LENGTH), [0, 0, 1])
-    out[m] = c + rr[:, None] * (np.outer(np.cos(psi), e) + side * np.outer(np.sin(psi), t))
+    # start the finger already curved the way the pattern intends, so the solver
+    # settles near the intended shape instead of getting stuck straight
+    grid = np.linspace(0, P.FINGER_LENGTH, 400)
+    phi = P._bend_angle(grid)
+    ds = grid[1] - grid[0]
+    ce = np.concatenate([[0], np.cumsum(np.sin(phi[:-1]) * ds)])
+    cz = np.concatenate([[0], np.cumsum(np.cos(phi[:-1]) * ds)])
+    sv = np.minimum(vv, 0.9 * P.FINGER_LENGTH)
+    ph = np.interp(sv, grid, phi)
+    zh = np.array([0, 0, 1.0])
+    c = (R - r0 + np.interp(sv, grid, ce))[:, None] * e + np.interp(sv, grid, cz)[:, None] * zh
+    nrm = np.cos(ph)[:, None] * e - np.sin(ph)[:, None] * zh
+    out[m] = c + rr[:, None] * (np.cos(psi)[:, None] * nrm + side * np.outer(np.sin(psi), t))
     return out
 
 
@@ -184,7 +195,8 @@ def build():
         F = F[:, [0, 2, 1]]
     tip_local = np.argmin(np.linalg.norm(uv - [0, P.THUMB_LENGTH], axis=1))
     tips = newid[[2 * k * npts + tip_local for k in range(n)]]
-    return dict(X=Xm, F=F, E=E, L=L, BP=BP, LB=LB, seam=seam, hem=hem, tips=tips)
+    centre = newid[np.argmin(np.linalg.norm(uv - [P.W0 / 2, -P.TRI_DEPTH], axis=1))]
+    return dict(X=Xm, F=F, E=E, L=L, BP=BP, LB=LB, seam=seam, hem=hem, tips=tips, centre=centre)
 
 
 def _scatter(n, idx, vals):
@@ -194,7 +206,8 @@ def _scatter(n, idx, vals):
     return out
 
 
-def relax(m, iters=4000, pressure=1.0, stiff=60.0, log=False):
+def relax(m, iters=4000, pressure=1.0, stiff=60.0, log=False, tie=None):
+    """tie: if set, the centre of the top is tied down to this height (a cord to the tube end)."""
     """Find the resting shape: minimise (stretch energy + tube contact - pressure x volume)."""
     from scipy.optimize import minimize
     F, E, L, BP, LB = m["F"], m["E"], m["L"], m["BP"], m["LB"]
@@ -242,6 +255,11 @@ def relax(m, iters=4000, pressure=1.0, stiff=60.0, log=False):
         dz = X[hem, 2] + P.CUFF_HEIGHT
         en += kh * np.sum(dz ** 2)
         g[hem, 2] += 2 * kh * dz
+        if tie is not None:
+            c = m["centre"]
+            dc = X[c] - np.array([0, 0, tie])
+            en += kh * np.sum(dc ** 2)
+            g[c] += 2 * kh * dc
         return en, g.ravel()
 
     res = minimize(f, m["X"].ravel(), jac=True, method="L-BFGS-B",
@@ -292,15 +310,15 @@ def render(m, X, path, title):
         allc = np.column_stack([np.clip(allc, 0, 1), np.ones(len(allc))])
         pc = Poly3DCollection(polys, facecolors=allc, edgecolors=allc, linewidths=0.25)
         ax.add_collection3d(pc)
-        lim = 4.3
-        ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_zlim(-P.CUFF_HEIGHT - 2.5, 6.0)
-        ax.set_box_aspect((2 * lim, 2 * lim, 8.5 + P.CUFF_HEIGHT), zoom=1.35)
+        lim = 5.5
+        ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_zlim(-P.CUFF_HEIGHT - 2.5, P.FINGER_LENGTH + 1.0)
+        ax.set_box_aspect((2 * lim, 2 * lim, P.FINGER_LENGTH + 3.5 + P.CUFF_HEIGHT), zoom=1.25)
         ax.view_init(elev=el, azim=az)
         ax.set_axis_off()
         ax.set_title(lbl, fontsize=10)
     fig.suptitle(title, fontsize=12)
     fig.text(0.5, 0.04, "Simulated from the flat pattern pieces: dark bands are seams, grey is the 5 in tube. "
-             "Fabric shown lightly stuffed; it can't stretch, so ridges and creases come from the pattern.",
+             "Fabric shown inflated; it can't stretch, so ridges and creases come from the pattern.",
              ha="center", fontsize=8.5)
     fig.savefig(path, dpi=115, bbox_inches="tight")
     plt.close(fig)
