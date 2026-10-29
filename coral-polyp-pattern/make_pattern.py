@@ -10,6 +10,7 @@ Makes: pattern.pdf (print at 100 %), pattern-preview.png, polyp.png
 All sizes are in inches. Change the numbers in SETTINGS and run again.
 """
 import math
+import os
 import sys
 import numpy as np
 import matplotlib
@@ -21,10 +22,13 @@ from shapely.geometry import Polygon
 # ---------------- SETTINGS ----------------
 TUBE_DIAMETER = 5.0     # the tube the polyp slides over
 EASE = 0.5              # extra room around the tube so it slides on (woven fabric)
-FINGERS = 6             # number of fingers
+FINGERS = 5             # number of fingers
 CUFF_HEIGHT = 3.0       # finished height of the round "wrist" part
-FINGER_LENGTH = 6.0     # length of a finger on the flat piece, crotch to tip
-FINGER_BULGE = 0.35     # how much wider the flat finger gets above its base (total)
+FINGER_LENGTH = 7.5     # length of a finger on the flat piece, crotch to tip
+BODY_WIDTH = 2.6        # flat width of the finger's middle (it starts wider at the crotch)
+TIP_WIDTH = 3.59        # flat width of the end of the finger
+TIP_LENGTH = 2.06       # length of the rounded end
+TIP_POINT = 0.5         # end shape: 0.5 = round, 1.0 = pointed, in between = rounded point
 SPLAY = 45              # degrees the fingers lean out just above the crotch
 TURN_LENGTH = 1.5       # distance above the crotch over which they turn outward;
                         # above that they curve gently back to vertical at the tip
@@ -32,21 +36,36 @@ SEAM = 3 / 8            # seam allowance on every sewn edge
 HEM = 1.0               # extra at the wrist edge, folded up for a hem
 # ------------------------------------------
 
+# Any setting can be overridden from the command line, e.g.
+#   POLYP="FINGER_LENGTH=8.5,TIP_POINT=1" python3 make_pattern.py --out pointy
+for _kv in filter(None, os.environ.get("POLYP", "").split(",")):
+    _k, _v = _kv.split("=")
+    globals()[_k.strip()] = float(_v)
+FINGERS = int(FINGERS)
+
 THUMBS = FINGERS
 THUMB_LENGTH = FINGER_LENGTH
 CIRC = math.pi * TUBE_DIAMETER + EASE        # finished cuff circumference
 W0 = CIRC / FINGERS                          # finished width of one piece at the crotch
 TRI_DEPTH = (W0 / 2) / math.tan(math.pi / FINGERS)   # crotch line to centre of the top
-WM = W0 + FINGER_BULGE                       # widest part of the flat finger
-TIP_H = WM / 2 * 1.15                        # height of the rounded tip
-BODY_H = FINGER_LENGTH - TIP_H               # part below the rounded tip
+BODY_H = FINGER_LENGTH - TIP_LENGTH          # where the rounded end starts
+NARROW = 1.5                                 # crotch width eases to BODY_WIDTH over this length
+WIDEN = 1.5                                  # body eases out to TIP_WIDTH over this length
+
+
+def _ease(t):
+    """0 to 1 smoothly as t goes 0 to 1."""
+    t = np.clip(t, 0, 1)
+    return (1 - np.cos(np.pi * t)) / 2
 
 
 def finger_half_width(s):
     """Half the flat width of the finger at distance s above the crotch."""
     s = np.asarray(s, float)
-    body = W0 / 2 + (WM - W0) / 2 * np.sin(np.pi / 2 * np.clip(s / BODY_H, 0, 1))
-    tip = WM / 2 * np.sqrt(np.clip(1 - ((s - BODY_H) / TIP_H) ** 2, 0, 1))
+    body = (W0 + (BODY_WIDTH - W0) * _ease(s / NARROW)
+            + (TIP_WIDTH - BODY_WIDTH) * _ease((s - (BODY_H - WIDEN)) / WIDEN)) / 2
+    t = np.clip((s - BODY_H) / TIP_LENGTH, 0, 1)
+    tip = TIP_WIDTH / 2 * np.clip(1 - t ** 2, 0, 1) ** TIP_POINT
     return np.where(s < BODY_H, body, tip)
 
 
@@ -127,44 +146,79 @@ def _rot(p):
 
 
 def page(pdf, sew, cut, notches, title, lines, footer, grain_x, grain_y, text_xy, slash):
-    """One landscape page, true size. The piece is drawn turned so the finger points right."""
-    fig = plt.figure(figsize=(11, 8.5))
-    ax = fig.add_axes([0, 0, 1, 1])
+    """Landscape pages, true size. The piece is drawn turned so the finger points right.
+    If it is too long for one page it is split over several, with tape lines to join them."""
     rc, rs = _rot(cut), _rot(sew)
-    cx = (rc[:, 0].min() + rc[:, 0].max()) / 2
+    x0, x1 = rc[:, 0].min() - 0.2, rc[:, 0].max() + 0.2
     cy = (rc[:, 1].min() + rc[:, 1].max()) / 2 - 0.3
-    ax.set_xlim(cx - 5.5, cx + 5.5)          # axes cover the whole page, so 1 unit = 1 inch
-    ax.set_ylim(cy - 4.25, cy + 4.25)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.plot(rc[:, 0], rc[:, 1], "k-", lw=1.4)
-    ax.plot(rs[:, 0], rs[:, 1], "k--", lw=0.7)
-    g = _rot([(grain_x, grain_y[0]), (grain_x, grain_y[1])])
-    ax.annotate("", xy=g[1], xytext=g[0], arrowprops=dict(arrowstyle="<->", lw=0.8))
-    ax.text(g[:, 0].mean(), g[0, 1] + 0.08, "grain", fontsize=7, ha="center")
-    sl = _rot(slash)
-    ax.plot(sl[:, 0], sl[:, 1], "k-", lw=1.4)
-    ax.plot([0], [0], "ko", ms=4)
-    t = _rot([(0.12, -0.55)])[0]
-    ax.text(t[0], t[1], "slash to dot", fontsize=6.5, ha="center", va="top")
-    marks = {"<": "^", ">": "v"}
-    for (x, y, mk) in notches:               # small triangles on the cut line = match points
-        p = _rot([(x, y)])[0]
-        ax.plot([p[0]], [p[1]], marker=marks[mk], ms=6, color="k")
-    t = _rot([text_xy])[0]
-    ax.text(t[0], t[1], "\n".join(lines), ha="center", va="center", fontsize=7.5)
-    top, left, right = cy + 4.25, cx - 5.5, cx + 5.5
-    ax.text(cx, top - 0.55, title, ha="center", fontsize=12, weight="bold")
-    ax.add_patch(plt.Rectangle((left + 0.5, top - 1.5), 1, 1, fill=False, lw=1))
-    ax.text(left + 1.0, top - 1.0, "1 in\ntest\nsquare", ha="center", va="center", fontsize=6.5)
-    ax.text(right - 0.5, top - 0.5, "Print at 100 % / Actual size, landscape.\nCheck the square measures 1 in.",
-            ha="right", va="top", fontsize=7)
-    ax.text(cx, cy - 4.25 + 0.4, footer, ha="center", fontsize=7)
-    pdf.savefig(fig)
-    plt.close(fig)
+    usable, overlap = 10.0, 1.0                # printable width per page, and shared strip
+    n = max(1, math.ceil((x1 - x0 - overlap) / (usable - overlap)))
+    if n == 1:
+        lefts = [(x0 + x1) / 2 - usable / 2]
+    else:
+        lefts = [x0 + i * (usable - overlap) for i in range(n)]
+    joins = [lefts[i + 1] + overlap / 2 for i in range(n - 1)]
+    for i, L in enumerate(lefts):
+        fig = plt.figure(figsize=(11, 8.5))
+        ax = fig.add_axes([0, 0, 1, 1])
+        left, right = L - 0.5, L + usable + 0.5
+        ax.set_xlim(left, right)               # axes cover the whole page, so 1 unit = 1 inch
+        ax.set_ylim(cy - 4.25, cy + 4.25)
+        ax.set_aspect("equal")
+        ax.axis("off")
+        ax.plot(rc[:, 0], rc[:, 1], "k-", lw=1.4)
+        ax.plot(rs[:, 0], rs[:, 1], "k--", lw=0.7)
+        g = _rot([(grain_x, grain_y[0]), (grain_x, grain_y[1])])
+        ax.annotate("", xy=g[1], xytext=g[0], arrowprops=dict(arrowstyle="<->", lw=0.8))
+        ax.text(g[:, 0].mean(), g[0, 1] + 0.08, "grain", fontsize=7, ha="center")
+        sl = _rot(slash)
+        ax.plot(sl[:, 0], sl[:, 1], "k-", lw=1.4)
+        ax.plot([0], [0], "ko", ms=4)
+        t = _rot([(0.12, -0.55)])[0]
+        ax.text(t[0], t[1], "slash to dot", fontsize=6.5, ha="center", va="top")
+        marks = {"<": "^", ">": "v"}
+        for (x, y, mk) in notches:             # small triangles on the cut line = match points
+            p = _rot([(x, y)])[0]
+            ax.plot([p[0]], [p[1]], marker=marks[mk], ms=6, color="k")
+        t = _rot([text_xy])[0]
+        ax.text(t[0], t[1], "\n".join(lines), ha="center", va="center", fontsize=7.5)
+        top = cy + 4.25
+        mid = (left + right) / 2
+        label = title if n == 1 else f"{title}   (page {i + 1} of {n})"
+        ax.text(mid, top - 0.55, label, ha="center", fontsize=12, weight="bold")
+        piece = Polygon(rc).buffer(0)
+        for xj in joins:                       # keep clear of tape lines and their notes
+            piece = piece.union(Polygon([(xj - 2.2, cy - 5), (xj + 2.2, cy - 5), (xj + 2.2, cy + 5), (xj - 2.2, cy + 5)]))
+        bottom = cy - 4.25
+        for qx, qy in [(left + 0.5, top - 1.5), (left + 0.5, bottom + 0.8),
+                       (right - 1.5, bottom + 0.8), (right - 1.5, top - 1.9)]:
+            if not piece.buffer(0.2).intersects(Polygon([(qx, qy), (qx + 1, qy), (qx + 1, qy + 1), (qx, qy + 1)])):
+                break
+        ax.add_patch(plt.Rectangle((qx, qy), 1, 1, fill=False, lw=1))
+        ax.text(qx + 0.5, qy + 0.5, "1 in\ntest\nsquare", ha="center", va="center", fontsize=6.5)
+        ax.text(right - 0.5, top - 0.5, "Print at 100 % / Actual size, landscape.\nCheck the square measures 1 in.",
+                ha="right", va="top", fontsize=7)
+        ax.text(mid, cy - 4.25 + 0.4, footer, ha="center", fontsize=7)
+        # tape lines: page i's right join matches page i+1's left join
+        for j, xj in enumerate(joins):
+            if j not in (i - 1, i):
+                continue
+            ax.plot([xj, xj], [cy - 3.6, cy + 3.2], color="0.4", lw=0.8, ls=(0, (6, 3)))
+            for yy in (cy - 3.0, cy, cy + 2.6):
+                ax.plot([xj], [yy], marker="D", ms=5, color="0.4")
+            if j == i - 1:
+                txt = f"TRIM page {i + 1} on this line,\nlay it over page {i}\nso lines and diamonds match"
+                ax.text(xj + 0.1, cy - 3.6, txt, fontsize=6.5, va="bottom", ha="left", color="0.3")
+            else:
+                txt = f"Page {i + 2} lines up here"
+                ax.text(xj - 0.1, cy - 3.6, txt, fontsize=6.5, va="bottom", ha="right", color="0.3")
+        pdf.savefig(fig)
+        plt.close(fig)
 
 
 def main():
+    out = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "."
+    os.makedirs(out, exist_ok=True)
     sa = '3/8"' if abs(SEAM - 0.375) < 1e-6 else f'{SEAM}"'
     foot = (f'Solid line = cut.  Dashed line = sew.  Seam allowance {sa} included.  '
             f'Cuff circumference {CIRC:.2f}" for a {TUBE_DIAMETER:g}" tube ({EASE:g}" ease).')
@@ -174,9 +228,9 @@ def main():
     lines = [f"Cut {2 * FINGERS}", f"({FINGERS} pairs: fold fabric", f"in two and cut {FINGERS})", "",
              "Outer edge + tip + inner edge", "+ triangle's straight edge", "= seam to its twin",
              "", "Both sides of the V", "= seams to the", "neighbouring finger"]
-    with PdfPages("pattern.pdf") as pdf:
+    with PdfPages(os.path.join(out, "pattern.pdf")) as pdf:
         page(pdf, b, b_cut, side_notches, "FINGER HALF", lines, foot, grain_x=-0.7,
-             grain_y=(-2.6, -0.3), text_xy=tuple(bend(np.array([[0.0, 0.55 * FINGER_LENGTH]]))[0]),
+             grain_y=(-2.6, -0.3), text_xy=tuple(bend(np.array([[0.0, 0.4 * FINGER_LENGTH]]))[0]),
              slash=slash)
 
     fig, ax = plt.subplots(figsize=(5, 7))
@@ -187,15 +241,15 @@ def main():
     ax.set_aspect("equal")
     ax.set_title(f"Finger half - cut {2 * FINGERS}\nSolid = cut line, dashed = sewing line", fontsize=10)
     ax.grid(alpha=0.3)
-    ax.set_xticks(range(-4, 4)); ax.set_yticks(range(-5, 7))
+    ax.set_xticks(range(-4, 4)); ax.set_yticks(range(-5, 11))
     ax.set_xlabel("inches")
-    fig.savefig("pattern-preview.png", dpi=110, bbox_inches="tight")
+    fig.savefig(os.path.join(out, "pattern-preview.png"), dpi=110, bbox_inches="tight")
     plt.close(fig)
 
     if "--no-sim" not in sys.argv:
         print("simulating the sewn polyp (takes a few minutes)...")
         from sim_polyp import make_preview
-        make_preview("polyp.png", f"Simulated from the flat pattern, inflated (fingers turn out {SPLAY:g}\u00b0, then back up)")
+        make_preview(os.path.join(out, "polyp.png"), f"Simulated from the flat pattern, inflated (fingers turn out {SPLAY:g}\u00b0, then back up)")
 
     print(f"cuff circumference {CIRC:.3f}  piece width at crotch {W0:.3f}")
     print(f"cut size {np.ptp(b_cut[:, 0]):.2f} x {np.ptp(b_cut[:, 1]):.2f}")
