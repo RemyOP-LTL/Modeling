@@ -29,6 +29,9 @@ BODY_WIDTH = 2.6        # flat width of the finger's middle (it starts wider at 
 TIP_WIDTH = 3.59        # flat width of the end of the finger
 TIP_LENGTH = 2.06       # length of the rounded end
 TIP_POINT = 0.5         # end shape: 0.5 = round, 1.0 = pointed, in between = rounded point
+TAPER = 0               # 1 = ignore the body/tip widths above: the finger starts at full crotch
+                        #     width and tapers all the way to a sharp point
+TAPER_FULLNESS = 0.6    # with TAPER: 0 = straight cone sides, higher = fuller before the point
 SPLAY = 45              # degrees the fingers lean out just above the crotch
 TURN_LENGTH = 1.5       # distance above the crotch over which they turn outward;
                         # above that they curve gently back to vertical at the tip
@@ -62,6 +65,9 @@ def _ease(t):
 def finger_half_width(s):
     """Half the flat width of the finger at distance s above the crotch."""
     s = np.asarray(s, float)
+    if TAPER:
+        u = np.clip(s / FINGER_LENGTH, 0, 1)
+        return W0 / 2 * (1 - u) * (1 + TAPER_FULLNESS * u)
     body = (W0 + (BODY_WIDTH - W0) * _ease(s / NARROW)
             + (TIP_WIDTH - BODY_WIDTH) * _ease((s - (BODY_H - WIDEN)) / WIDEN)) / 2
     t = np.clip((s - BODY_H) / TIP_LENGTH, 0, 1)
@@ -218,6 +224,7 @@ def page(pdf, sew, cut, notches, title, lines, footer, grain_x, grain_y, text_xy
 
 def main():
     out = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "."
+    name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else f"polyp-{FINGERS}"
     os.makedirs(out, exist_ok=True)
     sa = '3/8"' if abs(SEAM - 0.375) < 1e-6 else f'{SEAM}"'
     foot = (f'Solid line = cut.  Dashed line = sew.  Seam allowance {sa} included.  '
@@ -228,8 +235,8 @@ def main():
     lines = [f"Cut {2 * FINGERS}", f"({FINGERS} pairs: fold fabric", f"in two and cut {FINGERS})", "",
              "Outer edge + tip + inner edge", "+ triangle's straight edge", "= seam to its twin",
              "", "Both sides of the V", "= seams to the", "neighbouring finger"]
-    with PdfPages(os.path.join(out, "pattern.pdf")) as pdf:
-        page(pdf, b, b_cut, side_notches, "FINGER HALF", lines, foot, grain_x=-0.7,
+    with PdfPages(os.path.join(out, f"{name}-pattern.pdf")) as pdf:
+        page(pdf, b, b_cut, side_notches, f"FINGER HALF  -  {name}", lines, foot, grain_x=-0.7,
              grain_y=(-2.6, -0.3), text_xy=tuple(bend(np.array([[0.0, 0.4 * FINGER_LENGTH]]))[0]),
              slash=slash)
 
@@ -239,17 +246,17 @@ def main():
     ax.plot(slash[:, 0], slash[:, 1], "k-", lw=1.4)
     ax.plot([0], [0], "ko", ms=4)
     ax.set_aspect("equal")
-    ax.set_title(f"Finger half - cut {2 * FINGERS}\nSolid = cut line, dashed = sewing line", fontsize=10)
+    ax.set_title(f"{name}: finger half - cut {2 * FINGERS}\nSolid = cut line, dashed = sewing line", fontsize=10)
     ax.grid(alpha=0.3)
     ax.set_xticks(range(-4, 4)); ax.set_yticks(range(-5, 11))
     ax.set_xlabel("inches")
-    fig.savefig(os.path.join(out, "pattern-preview.png"), dpi=110, bbox_inches="tight")
+    fig.savefig(os.path.join(out, f"{name}-piece.png"), dpi=110, bbox_inches="tight")
     plt.close(fig)
 
     if "--no-sim" not in sys.argv:
         print("simulating the sewn polyp (takes a few minutes)...")
         from sim_polyp import make_preview
-        make_preview(os.path.join(out, "polyp.png"), f"Simulated from the flat pattern, inflated (fingers turn out {SPLAY:g}\u00b0, then back up)")
+        make_preview(os.path.join(out, f"{name}-3d.png"), f"Simulated from the flat pattern, inflated (fingers turn out {SPLAY:g}\u00b0, then back up)")
 
     print(f"cuff circumference {CIRC:.3f}  piece width at crotch {W0:.3f}")
     print(f"cut size {np.ptp(b_cut[:, 0]):.2f} x {np.ptp(b_cut[:, 1]):.2f}")

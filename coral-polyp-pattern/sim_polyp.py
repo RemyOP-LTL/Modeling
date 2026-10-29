@@ -116,7 +116,9 @@ def _embed(uv, k, side):
     return out
 
 
-def build():
+def build(single=False):
+    """single=True: only one finger (its two halves). Its side edges are held on the planes
+    where the neighbouring fingers would join it, so it behaves as if the rest were there."""
     uv, tri, edges = flat_piece()
     rest2d = P.bend(uv)                       # true flat shape (finger curved)
     n = P.THUMBS
@@ -133,7 +135,8 @@ def build():
     first = np.searchsorted(inv_s, np.arange(len(uniq)))
     inner_e = np.nonzero(cnt == 2)[0]
     bp = np.column_stack([opp_s[first[inner_e]], opp_s[first[inner_e] + 1]])
-    for k in range(n):
+    ks = [0] if single else range(n)
+    for k in ks:
         for side in (-1, 1):
             off = len(X) * npts
             X.append(_embed(uv * [1, 1], k, side))
@@ -166,12 +169,13 @@ def build():
                 parent[rj] = ri
 
     seam_vertices = []
-    for k in range(n):
+    for k in ks:
         Lp, Rp = 2 * k * npts, (2 * k + 1) * npts
         Ln = (2 * ((k + 1) % n)) * npts
         join(edges["centre"] + Lp, edges["centre"] + Rp)       # down the middle of a finger
-        join(edges["v_top"] + Rp, edges["v_top"] + Ln)         # to the next finger
-        join(edges["v_cuff"] + Rp, edges["v_cuff"] + Ln)
+        if not single:
+            join(edges["v_top"] + Rp, edges["v_top"] + Ln)     # to the next finger
+            join(edges["v_cuff"] + Rp, edges["v_cuff"] + Ln)
         for o in (Lp, Rp):
             seam_vertices += list(edges["centre"] + o) + list(edges["v_top"] + o) + list(edges["v_cuff"] + o)
     roots = np.array([find(i) for i in range(len(X))])
@@ -194,9 +198,17 @@ def build():
     if vol < 0:
         F = F[:, [0, 2, 1]]
     tip_local = np.argmin(np.linalg.norm(uv - [0, P.THUMB_LENGTH], axis=1))
-    tips = newid[[2 * k * npts + tip_local for k in range(n)]]
+    tips = newid[[2 * k * npts + tip_local for k in ks]]
     centre = newid[np.argmin(np.linalg.norm(uv - [P.W0 / 2, -P.TRI_DEPTH], axis=1))]
-    return dict(X=Xm, F=F, E=E, L=L, BP=BP, LB=LB, seam=seam, hem=hem, tips=tips, centre=centre)
+    planes = []
+    if single:
+        a = math.pi / n                      # finger 0 is centred at angle pi/n
+        for side, off in ((-1, 0), (1, npts)):
+            b = a + side * math.pi / n       # where the neighbour would be sewn on
+            idx = np.unique(newid[np.concatenate([edges["v_top"], edges["v_cuff"]]) + off])
+            planes.append((idx, np.array([-math.sin(b), math.cos(b), 0.0])))
+    return dict(X=Xm, F=F, E=E, L=L, BP=BP, LB=LB, seam=seam, hem=hem, tips=tips, centre=centre,
+                planes=planes, single=single)
 
 
 def _scatter(n, idx, vals):
@@ -255,6 +267,10 @@ def relax(m, iters=4000, pressure=1.0, stiff=60.0, log=False, tie=None):
         dz = X[hem, 2] + P.CUFF_HEIGHT
         en += kh * np.sum(dz ** 2)
         g[hem, 2] += 2 * kh * dz
+        for idx, nrm in m.get("planes", []):
+            dpl = X[idx] @ nrm
+            en += kh * np.sum(dpl ** 2)
+            g[idx] += 2 * kh * dpl[:, None] * nrm[None, :]
         if tie is not None:
             c = m["centre"]
             dc = X[c] - np.array([0, 0, tie])
@@ -324,8 +340,23 @@ def render(m, X, path, title):
     plt.close(fig)
 
 
-def make_preview(path, title, iters=6000):
-    m = build()
+def replicate(m, X):
+    """Copy a single simulated finger around the polyp."""
+    n = P.THUMBS
+    Xs, Fs = [], []
+    for k in range(n):
+        c, sn = math.cos(2 * math.pi * k / n), math.sin(2 * math.pi * k / n)
+        R = np.array([[c, -sn, 0], [sn, c, 0], [0, 0, 1]])
+        Xs.append(X @ R.T)
+        Fs.append(m["F"] + k * len(X))
+    full = dict(m, F=np.vstack(Fs), seam=np.tile(m["seam"], n))
+    return full, np.vstack(Xs)
+
+
+def make_preview(path, title, iters=6000, single=True):
+    m = build(single=single)
     X = relax(m, iters=iters)
+    if single:
+        m, X = replicate(m, X)
     render(m, X, path, title)
     return m, X

@@ -4,19 +4,36 @@ A fabric coral polyp made of **five fingers** around a round "wrist" (cuff) that
 
 Each finger is two mirror-image halves, so the seam runs from the centre of the top, out over the fingertip, and down the cuff. There's one pattern piece, and you cut 10 of it (5 pairs). The fingers **lean outward just above the cuff, then curve back up to vertical** at the tips. They narrow above the crotch to a skinnier middle, and the rounded end keeps the width of the earlier, wider fingers.
 
-![Simulated polyp](polyp.png)
+| Club tip (`polyp-5-club`) | Tapered point (`polyp-5-taper`) |
+|---|---|
+| ![club](designs/polyp-5-club-3d.png) | ![taper](designs/polyp-5-taper-3d.png) |
 
-## Files
+## Designs
 
-- **pattern.pdf**: the pattern piece at true size, drawn sideways on **landscape** pages. The piece is longer than one page, so it is split over 2 pages. Trim page 2 on its dashed tape line and lay it over page 1 so the lines and diamonds match, then tape. Print at **100 % / "Actual size"** and check the 1 in test square.
-- **pattern-preview.png**: the piece as a quick picture, upright.
-- **polyp.png**: the sewn polyp, simulated from the flat piece (see below).
-- **pointy-tip/**: a variation with longer fingers (8.5 in) and a pointed end. It was made with `POLYP="FINGER_LENGTH=8.5,TIP_LENGTH=2.8,TIP_POINT=1" python3 make_pattern.py --out pointy-tip`.
-- **five-fingers/**: 5 fingers at the earlier, even width (6 in long), before they were made skinnier.
-- **six-fingers/**: the earlier 6-finger version (6 in fingers).
-- **previous-outward-curve/**: an earlier version, with 4 in fingers that were straight at the base and curved outward. Code in commit `e02c3d8`.
-- **make_pattern.py**: draws the pattern. The settings are at the top. Run `python3 make_pattern.py` to remake everything, including the simulation (a few minutes). Add `--no-sim` to skip the simulation. Add `--out folder` to write the files to another folder. To override settings without editing the file, put them in `POLYP`, for example `POLYP="FINGERS=6,FINGER_LENGTH=8"`.
-- **sim_polyp.py**: the cloth simulation behind `polyp.png`.
+Every file is in `designs/`, and its name starts with the design name, so a pattern and its pictures always match:
+- `<design>-pattern.pdf`: the pattern to print
+- `<design>-3d.png`: the simulated, inflated polyp
+- `<design>-piece.png`: a quick picture of the flat piece
+
+| Design | What it is | How to make it |
+|---|---|---|
+| `polyp-5-club` | **Main design.** 5 fingers, 7.5 in long. Each finger narrows to a skinnier middle, and the rounded end is as wide as `polyp-5-wide`'s. | `python3 make_pattern.py --out designs --name polyp-5-club` |
+| `polyp-5-taper` | 5 fingers, 8.5 in long. Each finger starts at the full crotch width, like the earlier versions, and tapers all the way to a **sharp point**, like a horn. | `POLYP="TAPER=1,FINGER_LENGTH=8.5" python3 make_pattern.py --out designs --name polyp-5-taper` |
+| `polyp-5-club-pointed` | Like the club, but 8.5 in long, with a rounded point on the end. | `POLYP="FINGER_LENGTH=8.5,TIP_LENGTH=2.8,TIP_POINT=1" ...` (made with an earlier version of the script) |
+| `polyp-5-wide` | 5 fingers at an even width, 6 in long. | earlier version of the script |
+| `polyp-6` | 6 fingers, 6 in long, lean out and curve back up. | earlier version of the script |
+| `polyp-6-outward-4in` | 6 fingers, 4 in long, straight at the base and curving outward. | commit `e02c3d8` |
+
+Patterns longer than one page are split over 2 landscape pages. Trim the later page on its dashed tape line, lay it over the earlier page so the lines and diamonds match, and tape. Print at **100 % / "Actual size"** and check the 1 in test square.
+
+## Scripts
+
+- **make_pattern.py**: draws the pattern. The settings are at the top. Options:
+  - `--out folder` sets where the files go.
+  - `--name design` sets the start of every file name.
+  - `--no-sim` skips the 3D simulation.
+  - To override settings without editing the file, put them in `POLYP`, for example `POLYP="FINGERS=6,FINGER_LENGTH=8"`.
+- **sim_polyp.py**: the cloth simulation behind the `-3d.png` pictures.
 
 The scripts need `numpy`, `scipy`, `matplotlib` and `shapely` (`pip3 install numpy scipy matplotlib shapely`).
 
@@ -33,6 +50,8 @@ The scripts need `numpy`, `scipy`, `matplotlib` and `shapely` (`pip3 install num
 | `TIP_WIDTH` | 3.59 in | flat width of the rounded end (about 2.3 in across sewn), the same as the earlier 5-finger version |
 | `TIP_LENGTH` | 2.06 in | length of the rounded end |
 | `TIP_POINT` | 0.5 | end shape: 0.5 is round, 1.0 is pointed |
+| `TAPER` | 0 | 1 = ignore the three width settings above. The finger starts at full crotch width and tapers to a sharp point. |
+| `TAPER_FULLNESS` | 0.6 | with `TAPER`: 0 gives straight cone sides, and higher values give a fuller shape before the point |
 | `SPLAY` | 45° | how far the fingers lean out just above the crotch |
 | `TURN_LENGTH` | 1.5 in | the distance over which they turn outward. Above that, they curve back to vertical. |
 | `SEAM` | 3/8 in | seam allowance, already added to every edge |
@@ -69,6 +88,8 @@ Sew with the right (good) sides of the fabric facing each other, on the dashed l
 
 This works from the actual pattern piece, not from a drawing of the finished shape:
 
+It simulates **one finger** (its two halves) and copies it around the polyp. The finger's side edges are held on the planes where its neighbours would be sewn on, so it behaves as if they were there. A run takes about a minute.
+
 1. It fills each of the flat pieces with small triangles, about 1/8 in across.
 2. It stitches matching seam edges together point by point.
 3. It finds the resting shape by minimising energy (scipy L-BFGS):
@@ -86,19 +107,20 @@ What it leaves out: gravity, fabric thickness, seam-allowance bulk, the inflatio
 - The spread shape holds more air (151 vs 149 cubic in), so inflation favours it.
 - In real life, the fingers might need a nudge or a shake while inflating to pop into place.
 - To make it reliable, you could add internal ties or a stiffener at the base of each finger.
-- The simulation starts from the intended curve, and `polyp.png` shows that result.
+- The simulation starts from the intended curve, and the `-3d.png` pictures show that result.
 
 **Other results (quick, coarser runs):**
 - The 7.5 in fingers stand about 6.1 in tall once inflated, and the tips reach about 4.3 in out from the centre.
-- The pointy version's 8.5 in fingers stand about 6.5 in tall, and the tips reach about 4.7 in out.
+- `polyp-5-club-pointed`'s 8.5 in fingers stand about 6.5 in tall, and the tips reach about 4.7 in out.
 - The wider end reads as a gentle club shape.
 - Inflated, the pointed end comes out as a blunt, slightly crumpled point. Air pressure rounds a sharp point off.
 
 ## History
 
 - First design: version A (outer + inner halves) and version B (left + right halves). Remy chose B, and A was removed. It's still in the git history.
-- Next: B with fingers curving outward from vertical (`previous-outward-curve/`).
+- Next: B with fingers curving outward from vertical (`polyp-6-outward-4in`).
 - A try at a narrow neck with a bulb near the tip was dropped at Remy's request.
-- Next: fingers lean out at the base and curve back to vertical, and they're longer, 6 in (`six-fingers/`).
-- Remy preferred 5 fingers (`five-fingers/`).
-- Now: 5 fingers, skinnier and longer (7.5 in), with the end kept the same size. There's also a longer, pointed variation (`pointy-tip/`).
+- Next: fingers lean out at the base and curve back to vertical, and they're longer, 6 in (`polyp-6`).
+- Remy preferred 5 fingers (`polyp-5-wide`).
+- Then: 5 fingers, skinnier and longer (7.5 in), with the end kept the same size (`polyp-5-club`), plus a longer version with a rounded point (`polyp-5-club-pointed`).
+- Now: added `polyp-5-taper`, with fingers that taper to a real point. Files are now named by design.
