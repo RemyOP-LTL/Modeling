@@ -171,7 +171,7 @@ def main():
     side_notches = [(-W0 / 2 - SEAM, 0, "<"), (W0 / 2 + SEAM, 0, ">")]
     b, b_cut = piece_b(), cut_line(piece_b, True)
     slash = v_slash(b_cut)
-    lines = [f"Cut {2 * FINGERS}", f"({FINGERS} pairs: fold fabric", "in two and cut 6)", "",
+    lines = [f"Cut {2 * FINGERS}", f"({FINGERS} pairs: fold fabric", f"in two and cut {FINGERS})", "",
              "Outer edge + tip + inner edge", "+ triangle's straight edge", "= seam to its twin",
              "", "Both sides of the V", "= seams to the", "neighbouring finger"]
     with PdfPages("pattern.pdf") as pdf:

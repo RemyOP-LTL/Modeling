@@ -11,6 +11,7 @@ Each finger is two mirror-image halves, so the seam runs from the centre of the 
 - **pattern.pdf**: the pattern piece at true size, drawn sideways on a **landscape** page. Print at **100 % / "Actual size"** and check the 1 in test square.
 - **pattern-preview.png**: the piece as a quick picture, upright.
 - **polyp.png**: the sewn polyp, simulated from the flat piece (see below).
+- **five-fingers/**: the same design with `FINGERS = 5`, for comparison: its simulated picture and pattern. Each piece is 3.24 in wide at the crotch, not 2.70 in, so the fingers are fatter (about 2.1 in across). Cut 10.
 - **previous-outward-curve/**: an earlier version, with 4 in fingers that were straight at the base and curved outward. Code in commit `e02c3d8`.
 - **make_pattern.py**: draws the pattern. The settings are at the top. Run `python3 make_pattern.py` to remake everything, including the simulation (a few minutes). Add `--no-sim` to skip the simulation.
 - **sim_polyp.py**: the cloth simulation behind `polyp.png`.
