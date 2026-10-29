@@ -24,13 +24,14 @@ TUBE_DIAMETER = 5.0     # the tube the polyp slides over
 EASE = 0.5              # extra room around the tube so it slides on (woven fabric)
 FINGERS = 5             # number of fingers
 CUFF_HEIGHT = 3.0       # finished height of the round "wrist" part
-FINGER_LENGTH = 7.5     # length of a finger on the flat piece, crotch to tip
+FINGER_LENGTH = 8.5     # length of a finger on the flat piece, crotch to tip
 BODY_WIDTH = 2.6        # flat width of the finger's middle (it starts wider at the crotch)
 TIP_WIDTH = 3.59        # flat width of the end of the finger
 TIP_LENGTH = 2.06       # length of the rounded end
 TIP_POINT = 0.5         # end shape: 0.5 = round, 1.0 = pointed, in between = rounded point
-TAPER = 0               # 1 = ignore the body/tip widths above: the finger starts at full crotch
-                        #     width and tapers all the way to a sharp point
+TAPER = 1               # 1 = ignore the body/tip widths above: the finger starts at full crotch
+                        #     width and tapers all the way to a sharp point (the default design).
+                        # 0 = use BODY_WIDTH / TIP_WIDTH / TIP_LENGTH / TIP_POINT (club-shaped end)
 TAPER_FULLNESS = 0.6    # with TAPER: 0 = straight cone sides, higher = fuller before the point
 SPLAY = 45              # degrees the fingers lean out just above the crotch
 TURN_LENGTH = 1.5       # distance above the crotch over which they turn outward;
@@ -224,7 +225,7 @@ def page(pdf, sew, cut, notches, title, lines, footer, grain_x, grain_y, text_xy
 
 def main():
     out = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "."
-    name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else f"polyp-{FINGERS}"
+    name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else f"polyp-{FINGERS}-taper" if TAPER else f"polyp-{FINGERS}-club"
     os.makedirs(out, exist_ok=True)
     sa = '3/8"' if abs(SEAM - 0.375) < 1e-6 else f'{SEAM}"'
     foot = (f'Solid line = cut.  Dashed line = sew.  Seam allowance {sa} included.  '

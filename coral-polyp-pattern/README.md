@@ -2,11 +2,13 @@
 
 A fabric coral polyp made of **five fingers** around a round "wrist" (cuff) that slides over the end of a **5 in tube**. It works like an **inflatable costume**: air pressure fills it out.
 
-Each finger is two mirror-image halves, so the seam runs from the centre of the top, out over the fingertip, and down the cuff. There's one pattern piece, and you cut 10 of it (5 pairs). The fingers **lean outward just above the cuff, then curve back up to vertical** at the tips. They narrow above the crotch to a skinnier middle, and the rounded end keeps the width of the earlier, wider fingers.
+Each finger is two mirror-image halves, so the seam runs from the centre of the top, out over the fingertip, and down the cuff. There's one pattern piece, and you cut 10 of it (5 pairs). The fingers **lean outward just above the cuff, then curve back up to vertical** at the tips. By default each finger starts at full width and tapers to a sharp point.
 
-| Club tip (`polyp-5-club`) | Tapered point (`polyp-5-taper`) |
+**Default design: `polyp-5-taper`** (since 2026-10-29). Fingers taper from full width to a sharp point.
+
+| Tapered point (`polyp-5-taper`, default) | Club tip (`polyp-5-club`) |
 |---|---|
-| ![club](designs/polyp-5-club-3d.png) | ![taper](designs/polyp-5-taper-3d.png) |
+| ![taper](designs/polyp-5-taper-3d.png) | ![club](designs/polyp-5-club-3d.png) |
 
 ## Designs
 
@@ -17,8 +19,8 @@ Every file is in `designs/`, and its name starts with the design name, so a patt
 
 | Design | What it is | How to make it |
 |---|---|---|
-| `polyp-5-club` | **Main design.** 5 fingers, 7.5 in long. Each finger narrows to a skinnier middle, and the rounded end is as wide as `polyp-5-wide`'s. | `python3 make_pattern.py --out designs --name polyp-5-club` |
-| `polyp-5-taper` | 5 fingers, 8.5 in long. Each finger starts at the full crotch width, like the earlier versions, and tapers all the way to a **sharp point**, like a horn. | `POLYP="TAPER=1,FINGER_LENGTH=8.5" python3 make_pattern.py --out designs --name polyp-5-taper` |
+| `polyp-5-club` | 5 fingers, 7.5 in long. Each finger narrows to a skinnier middle, and the rounded end is as wide as `polyp-5-wide`'s. | `POLYP="TAPER=0,FINGER_LENGTH=7.5" python3 make_pattern.py --out designs --name polyp-5-club` |
+| `polyp-5-taper` | **Default.** 5 fingers, 8.5 in long. Each finger starts at the full crotch width, like the earlier versions, and tapers all the way to a **sharp point**, like a horn. | `python3 make_pattern.py --out designs` (the default settings) |
 | `polyp-5-club-pointed` | Like the club, but 8.5 in long, with a rounded point on the end. | `POLYP="FINGER_LENGTH=8.5,TIP_LENGTH=2.8,TIP_POINT=1" ...` (made with an earlier version of the script) |
 | `polyp-5-wide` | 5 fingers at an even width, 6 in long. | earlier version of the script |
 | `polyp-6` | 6 fingers, 6 in long, lean out and curve back up. | earlier version of the script |
@@ -45,19 +47,19 @@ The scripts need `numpy`, `scipy`, `matplotlib` and `shapely` (`pip3 install num
 | `EASE` | 0.5 in | extra room in the cuff so it slides on (woven fabric). Use about -0.5 for stretchy fabric. |
 | `FINGERS` | 5 | number of fingers |
 | `CUFF_HEIGHT` | 3.0 in | finished height of the wrist |
-| `FINGER_LENGTH` | 7.5 in | finger length on the flat piece, from crotch to tip |
+| `FINGER_LENGTH` | 8.5 in | finger length on the flat piece, from crotch to tip |
 | `BODY_WIDTH` | 2.6 in | flat width of the finger's middle (about 1.65 in across sewn) |
 | `TIP_WIDTH` | 3.59 in | flat width of the rounded end (about 2.3 in across sewn), the same as the earlier 5-finger version |
 | `TIP_LENGTH` | 2.06 in | length of the rounded end |
 | `TIP_POINT` | 0.5 | end shape: 0.5 is round, 1.0 is pointed |
-| `TAPER` | 0 | 1 = ignore the three width settings above. The finger starts at full crotch width and tapers to a sharp point. |
+| `TAPER` | 1 | 1 (default) = ignore the three width settings above. The finger starts at full crotch width and tapers to a sharp point. |
 | `TAPER_FULLNESS` | 0.6 | with `TAPER`: 0 gives straight cone sides, and higher values give a fuller shape before the point |
 | `SPLAY` | 45° | how far the fingers lean out just above the crotch |
 | `TURN_LENGTH` | 1.5 in | the distance over which they turn outward. Above that, they curve back to vertical. |
 | `SEAM` | 3/8 in | seam allowance, already added to every edge |
 | `HEM` | 1.0 in | extra at the bottom of the cuff for the hem |
 
-The cuff comes out 16.21 in around. At the crotch (where a finger starts), each piece is 3.24 in wide, because five fingers have to fill the cuff's circumference. Over the first 1.5 in, the finger narrows to `BODY_WIDTH`. Over the last 1.5 in before the rounded end, it widens back out to `TIP_WIDTH`. The cut piece is about 5.9 × 11.5 in.
+The cuff comes out 16.21 in around. At the crotch (where a finger starts), each piece is 3.24 in wide, because five fingers have to fill the cuff's circumference. With `TAPER = 1` (the default), the finger tapers from there to a point. The cut piece is about 5.0 × 13.2 in. With `TAPER = 0`, the finger narrows to `BODY_WIDTH` over the first 1.5 in and widens to `TIP_WIDTH` over the last 1.5 in before the rounded end.
 
 ## How to sew it
 
